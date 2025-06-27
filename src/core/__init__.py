@@ -13,6 +13,17 @@ from .processors import (
     PermissionAnalysisStage
 )
 from .progress_tracker import ProgressTracker
+from .discovery import DiscoveryModule
+from .models import (
+    AuditItem,
+    Site,
+    Library,
+    Folder,
+    File,
+    SiteContent,
+    DeltaResult,
+    SharePointItem
+)
 
 __all__ = [
     # Pipeline framework
@@ -32,6 +43,19 @@ __all__ = [
     # Data processing
     "DataProcessor",
     "ProcessingResult",
+
+    # Discovery
+    "DiscoveryModule",
+
+    # Models
+    "AuditItem",
+    "Site",
+    "Library",
+    "Folder",
+    "File",
+    "SiteContent",
+    "DeltaResult",
+    "SharePointItem",
 
     # Metrics and tracking
     "PipelineMetrics",

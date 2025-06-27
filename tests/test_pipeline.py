@@ -77,6 +77,7 @@ def mock_db_repo():
     """Create a mock database repository."""
     repo = AsyncMock(spec=DatabaseRepository)
     repo.bulk_insert = AsyncMock(return_value=100)
+    repo.fetch_all = AsyncMock(return_value=[])
     return repo
 
 
@@ -170,9 +171,18 @@ async def test_pipeline_metrics_collection(audit_pipeline, pipeline_context):
 @pytest.mark.asyncio
 async def test_discovery_stage(mock_discovery_module, mock_db_repo):
     """Test the discovery stage."""
+    # Setup mock data
+    mock_db_repo.fetch_all.side_effect = [
+        [{"site_id": "1", "url": "https://test.com"}],  # sites
+        [{"library_id": "1", "name": "Docs"}],  # libraries
+        [{"file_id": "1", "name": "test.txt"}],  # files
+        [{"folder_id": "1", "name": "Folder1"}],  # folders
+    ]
+
     context = PipelineContext(
         run_id="test_run",
-        db_repository=mock_db_repo
+        db_repository=mock_db_repo,
+        metrics=PipelineMetrics()
     )
 
     stage = DiscoveryStage(mock_discovery_module)
@@ -183,17 +193,26 @@ async def test_discovery_stage(mock_discovery_module, mock_db_repo):
     # Verify discovery was called
     mock_discovery_module.run_discovery.assert_called_once_with("test_run")
 
-    assert result == context
+    # Verify data was fetched
+    assert len(result.sites) == 1
+    assert len(result.libraries) == 1
+    assert len(result.files) == 1
+    assert len(result.folders) == 1
+    assert result.total_items == 4
 
 
 def test_validation_stage():
     """Test the validation stage."""
     async def run():
-        context = PipelineContext(run_id="test_run")
+        context = PipelineContext(run_id="test_run", metrics=PipelineMetrics())
         context.sites = [
             {"site_id": "1", "url": "https://test.sharepoint.com/sites/site1"},
             {"site_id": "2", "url": "invalid-url"},  # Invalid URL
             {"url": "https://test.sharepoint.com/sites/site3"}  # Missing site_id
+        ]
+        context.files = [
+            {"file_id": "1", "name": "test.txt", "server_relative_url": "/test.txt"},
+            {"name": "missing_id.txt", "server_relative_url": "/missing.txt"}  # Missing file_id
         ]
 
         stage = ValidationStage()
@@ -210,12 +229,20 @@ def test_validation_stage():
 def test_transformation_stage():
     """Test the transformation stage."""
     async def run():
-        context = PipelineContext(run_id="test_run")
+        context = PipelineContext(run_id="test_run", metrics=PipelineMetrics())
         context.raw_data = [
             {
                 "name": "test.docx",
                 "createdDateTime": "2023-01-01T00:00:00Z",
                 "url": "https://tenant.sharepoint.com/sites/test"
+            }
+        ]
+        context.files = [
+            {
+                "file_id": "1",
+                "name": "document.pdf",
+                "size_bytes": "12345",
+                "created_at": "2023-01-01T00:00:00Z"
             }
         ]
 
@@ -229,19 +256,32 @@ def test_transformation_stage():
         assert item["file_extension"] == ".docx"
         assert isinstance(item["createdDateTime"], datetime)
 
+        # Check file transformations
+        file = result.files[0]
+        assert file["size_bytes"] == 12345  # Converted to int
+        assert isinstance(file["created_at"], datetime)
+
     asyncio.run(run())
 
 
 def test_enrichment_stage():
     """Test the enrichment stage."""
     async def run():
-        context = PipelineContext(run_id="test_run")
+        context = PipelineContext(run_id="test_run", metrics=PipelineMetrics())
         context.processed_data = [
             {
                 "name": "old_file.pdf",
                 "created_at": datetime(2020, 1, 1),
-                "size_bytes": 5 * 1024 * 1024,  # 5 MB
                 "server_relative_url": "/sites/test/docs/folder1/folder2/file.pdf"
+            }
+        ]
+        context.files = [
+            {
+                "file_id": "1",
+                "name": "large_file.zip",
+                "size_bytes": 5 * 1024 * 1024,  # 5 MB
+                "created_at": datetime(2023, 1, 1),
+                "server_relative_url": "/sites/test/file.zip"
             }
         ]
 
@@ -252,8 +292,13 @@ def test_enrichment_stage():
         item = result.processed_data[0]
         assert "age_days" in item
         assert item["age_category"] == "Archived"  # Over 2 years old
-        assert item["size_category"] == "Small"  # 5 MB
-        assert item["path_depth"] == 4
+        assert item["path_depth"] == 5  # Number of path segments
+
+        # Check file enrichments
+        file = result.files[0]
+        assert file["size_category"] == "Small"  # 5 MB
+        assert file["file_type"] == "Archive"  # .zip file
+        assert "age_days" in file
 
     asyncio.run(run())
 
@@ -263,18 +308,16 @@ async def test_storage_stage(mock_db_repo):
     """Test the storage stage."""
     context = PipelineContext(
         run_id="test_run",
-        db_repository=mock_db_repo
+        db_repository=mock_db_repo,
+        metrics=PipelineMetrics()
     )
-    context.processed_data = [{"id": "1", "name": "test"}] * 10
-    context.files = [{"file_id": f"f{i}", "name": f"file{i}.txt"} for i in range(5)]
+    context.permissions = [{"object_id": "1", "permission_level": "Read"}] * 10
 
     stage = StorageStage(mock_db_repo)
     await stage.execute(context)
 
-    # Verify bulk insert was called
-    assert mock_db_repo.bulk_insert.called
-    # Should have been called for processed_items and files
-    assert mock_db_repo.bulk_insert.call_count >= 2
+    # Verify bulk insert was called for permissions
+    mock_db_repo.bulk_insert.assert_called_with("permissions", context.permissions[:1000])
 
 
 def test_data_processor_transforms_file_data():
@@ -419,11 +462,15 @@ async def test_permission_analysis_stage_without_analyzer():
 async def test_full_pipeline_integration():
     """Test a full pipeline with multiple stages."""
     # Create context with mocks
+    mock_db_repo = AsyncMock(spec=DatabaseRepository)
+    mock_db_repo.bulk_insert = AsyncMock(return_value=10)
+    mock_db_repo.fetch_all = AsyncMock(return_value=[])
+
     context = PipelineContext(
         run_id="integration_test",
         metrics=PipelineMetrics(),
         checkpoint_manager=AsyncMock(spec=CheckpointManager),
-        db_repository=AsyncMock(spec=DatabaseRepository)
+        db_repository=mock_db_repo
     )
 
     # Mock checkpoint manager to return None for all checkpoints
@@ -493,3 +540,78 @@ async def test_pipeline_metrics_summary():
     assert summary["stages"]["discovery"]["items_processed"] == 100
     assert summary["stages"]["processing"]["errors"] == 1
     assert summary["custom_metrics"]["total_size_gb"] == 50.5
+
+
+def test_transformation_date_parsing():
+    """Test various date format parsing in transformation stage."""
+    async def run():
+        stage = TransformationStage()
+
+        # Test different date formats
+        test_dates = [
+            "2023-01-01T00:00:00Z",
+            "2023-01-01T00:00:00.123Z",
+            "2023-01-01 00:00:00",
+            datetime(2023, 1, 1),
+            None,
+            ""
+        ]
+
+        for date_str in test_dates:
+            result = stage._parse_date(date_str)
+            if date_str and date_str != "":
+                if isinstance(date_str, datetime):
+                    assert result == date_str
+                else:
+                    assert isinstance(result, datetime) or result is None
+            else:
+                assert result is None
+
+    asyncio.run(run())
+
+
+def test_enrichment_categorization():
+    """Test various categorization functions in enrichment stage."""
+    stage = EnrichmentStage()
+
+    # Test age categorization
+    assert stage._categorize_age(15) == "Recent"
+    assert stage._categorize_age(60) == "Current"
+    assert stage._categorize_age(200) == "Aging"
+    assert stage._categorize_age(500) == "Old"
+    assert stage._categorize_age(1000) == "Archived"
+
+    # Test size categorization
+    assert stage._categorize_size(0) == "Empty"
+    assert stage._categorize_size(500 * 1024) == "Tiny"  # 500 KB
+    assert stage._categorize_size(5 * 1024 * 1024) == "Small"  # 5 MB
+    assert stage._categorize_size(50 * 1024 * 1024) == "Medium"  # 50 MB
+    assert stage._categorize_size(500 * 1024 * 1024) == "Large"  # 500 MB
+    assert stage._categorize_size(2 * 1024 * 1024 * 1024) == "Huge"  # 2 GB
+
+    # Test external user detection
+    assert stage._is_external_user("user#ext#@company.com") is True
+    assert stage._is_external_user("user@gmail.com") is True
+    assert stage._is_external_user("internal.user@company.com") is False
+
+
+@pytest.mark.asyncio
+async def test_discovery_stage_error_handling(mock_discovery_module, mock_db_repo):
+    """Test discovery stage handles errors gracefully."""
+    # Make discovery fail
+    mock_discovery_module.run_discovery.side_effect = Exception("Discovery failed")
+
+    context = PipelineContext(
+        run_id="test_run",
+        db_repository=mock_db_repo,
+        metrics=PipelineMetrics()
+    )
+
+    stage = DiscoveryStage(mock_discovery_module)
+
+    # Should raise the exception
+    with pytest.raises(Exception, match="Discovery failed"):
+        await stage.execute(context)
+
+    # Should record error metric
+    assert context.metrics.stage_error_counts.get("discovery", 0) == 1

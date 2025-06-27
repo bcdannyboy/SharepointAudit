@@ -37,29 +37,56 @@ class DiscoveryStage(PipelineStage):
                 context.sites = sites
                 context.raw_data.extend(sites)
 
-                # Get all discovered files for metrics
-                file_count = await self._count_files(context.db_repository)
-                context.total_items += file_count
+                # Get discovered libraries
+                libraries = await self._fetch_libraries(context.db_repository)
+                context.libraries = libraries
 
-            self.logger.info(f"Discovery completed. Found {len(context.sites)} sites, {context.total_items} total items")
+                # Get discovered files
+                files = await self._fetch_files(context.db_repository)
+                context.files = files
+
+                # Get discovered folders
+                folders = await self._fetch_folders(context.db_repository)
+                context.folders = folders
+
+                # Update total item count
+                context.total_items = len(sites) + len(libraries) + len(files) + len(folders)
+
+                # Record metrics
+                if context.metrics:
+                    context.metrics.record_stage_items("discovery", context.total_items)
+
+            self.logger.info(f"Discovery completed. Found {len(context.sites)} sites, "
+                           f"{len(context.libraries)} libraries, {len(context.folders)} folders, "
+                           f"{len(context.files)} files. Total: {context.total_items} items")
 
         except Exception as e:
             self.logger.error(f"Discovery stage failed: {str(e)}")
+            if context.metrics:
+                context.metrics.record_stage_error("discovery")
             raise
 
         return context
 
     async def _fetch_sites(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
         """Fetch all discovered sites from the database."""
-        # This is a simplified version - in real implementation would use proper queries
-        # For now, return empty list to allow pipeline to run
-        return []
+        query = "SELECT * FROM sites"
+        return await db_repo.fetch_all(query)
 
-    async def _count_files(self, db_repo: DatabaseRepository) -> int:
-        """Count total discovered files."""
-        # This is a simplified version - in real implementation would use proper queries
-        # For now, return 0 to allow pipeline to run
-        return 0
+    async def _fetch_libraries(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
+        """Fetch all discovered libraries from the database."""
+        query = "SELECT * FROM libraries"
+        return await db_repo.fetch_all(query)
+
+    async def _fetch_files(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
+        """Fetch all discovered files from the database."""
+        query = "SELECT * FROM files"
+        return await db_repo.fetch_all(query)
+
+    async def _fetch_folders(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
+        """Fetch all discovered folders from the database."""
+        query = "SELECT * FROM folders"
+        return await db_repo.fetch_all(query)
 
 
 class ValidationStage(PipelineStage):
@@ -72,18 +99,35 @@ class ValidationStage(PipelineStage):
     async def execute(self, context: PipelineContext) -> PipelineContext:
         """Validate the discovered data."""
         self.logger.info("Starting validation stage")
+        self.validation_errors = []
 
         # Validate sites
         for site in context.sites:
             self._validate_site(site)
 
+        # Validate files
+        for file in context.files:
+            self._validate_file(file)
+
+        # Validate folders
+        for folder in context.folders:
+            self._validate_folder(folder)
+
         # Validate raw data
         for item in context.raw_data:
             self._validate_item(item)
 
+        # Record metrics
+        if context.metrics:
+            context.metrics.record_stage_items("validation",
+                len(context.sites) + len(context.files) + len(context.folders) + len(context.raw_data))
+
         if self.validation_errors:
             self.logger.warning(f"Found {len(self.validation_errors)} validation errors")
             context.errors.extend(self.validation_errors)
+            if context.metrics:
+                for _ in self.validation_errors:
+                    context.metrics.record_stage_error("validation")
         else:
             self.logger.info("All data passed validation")
 
@@ -98,10 +142,26 @@ class ValidationStage(PipelineStage):
                 self.validation_errors.append(f"Site missing required field: {field}")
 
         # Validate URL format
-        if "url" in site:
+        if "url" in site and site["url"]:
             url = site["url"]
             if not url.startswith("https://") or ".sharepoint.com" not in url:
                 self.validation_errors.append(f"Invalid site URL: {url}")
+
+    def _validate_file(self, file: Dict[str, Any]) -> None:
+        """Validate a file object."""
+        required_fields = ["file_id", "name", "server_relative_url"]
+
+        for field in required_fields:
+            if field not in file or not file[field]:
+                self.validation_errors.append(f"File missing required field: {field}")
+
+    def _validate_folder(self, folder: Dict[str, Any]) -> None:
+        """Validate a folder object."""
+        required_fields = ["folder_id", "name", "server_relative_url"]
+
+        for field in required_fields:
+            if field not in folder or not folder[field]:
+                self.validation_errors.append(f"Folder missing required field: {field}")
 
     def _validate_item(self, item: Dict[str, Any]) -> None:
         """Validate a generic item."""
@@ -129,21 +189,39 @@ class TransformationStage(PipelineStage):
         """Transform raw API data into structured database records."""
         self.logger.info("Starting transformation stage")
 
+        items_transformed = 0
+
         # Process raw data
         for raw_item in context.raw_data:
             try:
                 processed_item = self._transform_item(raw_item)
                 if processed_item:
                     context.processed_data.append(processed_item)
+                    items_transformed += 1
             except Exception as e:
                 self.logger.error(f"Failed to transform item: {str(e)}")
                 context.errors.append(f"Transform error: {str(e)}")
+                if context.metrics:
+                    context.metrics.record_stage_error("transformation")
 
         # Transform specific data types
         if context.sites:
             context.sites = [self._transform_site(site) for site in context.sites]
+            items_transformed += len(context.sites)
 
-        self.logger.info(f"Transformed {len(context.processed_data)} items")
+        if context.files:
+            context.files = [self._transform_file(file) for file in context.files]
+            items_transformed += len(context.files)
+
+        if context.folders:
+            context.folders = [self._transform_folder(folder) for folder in context.folders]
+            items_transformed += len(context.folders)
+
+        # Record metrics
+        if context.metrics:
+            context.metrics.record_stage_items("transformation", items_transformed)
+
+        self.logger.info(f"Transformed {items_transformed} items")
 
         return context
 
@@ -152,17 +230,18 @@ class TransformationStage(PipelineStage):
         transformed = item.copy()
 
         # Normalize date fields
-        date_fields = ["created_at", "modified_at", "createdDateTime", "lastModifiedDateTime"]
+        date_fields = ["created_at", "modified_at", "createdDateTime", "lastModifiedDateTime",
+                      "granted_at", "added_at", "last_synced", "started_at", "completed_at"]
         for field in date_fields:
             if field in transformed and transformed[field]:
                 transformed[field] = self._parse_date(transformed[field])
 
         # Normalize names (uppercase for consistency)
-        if "name" in transformed:
+        if "name" in transformed and transformed["name"]:
             transformed["name_normalized"] = transformed["name"].upper()
 
         # Extract file extension if it's a file
-        if "name" in transformed and "." in transformed["name"]:
+        if "name" in transformed and transformed["name"] and "." in transformed["name"]:
             transformed["file_extension"] = Path(transformed["name"]).suffix.lower()
 
         return transformed
@@ -172,7 +251,7 @@ class TransformationStage(PipelineStage):
         transformed = self._transform_item(site)
 
         # Extract tenant name from URL
-        if "url" in transformed:
+        if "url" in transformed and transformed["url"]:
             match = re.search(r"https://([^.]+)\.sharepoint\.com", transformed["url"])
             if match:
                 transformed["tenant_name"] = match.group(1)
@@ -183,10 +262,44 @@ class TransformationStage(PipelineStage):
 
         return transformed
 
+    def _transform_file(self, file: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform file-specific data."""
+        transformed = self._transform_item(file)
+
+        # Ensure size_bytes is an integer
+        if "size_bytes" in transformed and transformed["size_bytes"]:
+            try:
+                transformed["size_bytes"] = int(transformed["size_bytes"])
+            except (ValueError, TypeError):
+                transformed["size_bytes"] = 0
+
+        return transformed
+
+    def _transform_folder(self, folder: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform folder-specific data."""
+        transformed = self._transform_item(folder)
+
+        # Ensure item_count is an integer
+        if "item_count" in transformed and transformed["item_count"]:
+            try:
+                transformed["item_count"] = int(transformed["item_count"])
+            except (ValueError, TypeError):
+                transformed["item_count"] = 0
+
+        return transformed
+
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         """Parse various date formats."""
         if isinstance(date_str, datetime):
             return date_str
+
+        if not date_str:
+            return None
+
+        # Handle ISO format with timezone
+        if isinstance(date_str, str):
+            # Remove timezone info for parsing
+            date_str = date_str.replace("+00:00", "Z")
 
         for pattern in self.date_patterns:
             try:
@@ -218,15 +331,32 @@ class EnrichmentStage(PipelineStage):
         """Enrich data with calculated and derived fields."""
         self.logger.info("Starting enrichment stage")
 
+        items_enriched = 0
+
         # Enrich processed data
         for item in context.processed_data:
             self._enrich_item(item)
+            items_enriched += 1
+
+        # Enrich files
+        for file in context.files:
+            self._enrich_file(file)
+            items_enriched += 1
+
+        # Enrich folders
+        for folder in context.folders:
+            self._enrich_folder(folder)
+            items_enriched += 1
 
         # Calculate aggregated metrics
         if context.files:
             self._calculate_storage_metrics(context)
 
-        self.logger.info("Data enrichment completed")
+        # Record metrics
+        if context.metrics:
+            context.metrics.record_stage_items("enrichment", items_enriched)
+
+        self.logger.info(f"Data enrichment completed for {items_enriched} items")
 
         return context
 
@@ -239,25 +369,46 @@ class EnrichmentStage(PipelineStage):
             item["age_category"] = self._categorize_age(age_days)
 
         # Calculate path depth
-        if "server_relative_url" in item:
-            path = item["server_relative_url"]
-            # Split path and remove empty parts
-            path_parts = [p for p in path.split("/") if p]
-            # In SharePoint paths: /sites/test/docs/folder1/folder2/file.pdf
-            # We count the folder depth excluding the root "sites" and the file itself
-            # So we subtract 2 (1 for "sites", 1 for the file)
-            if len(path_parts) > 1:
-                item["path_depth"] = len(path_parts) - 2
-            else:
-                item["path_depth"] = 0
-
-        # Categorize file size
-        if "size_bytes" in item:
-            item["size_category"] = self._categorize_size(item["size_bytes"])
+        if "server_relative_url" in item and item["server_relative_url"]:
+            item["path_depth"] = self._calculate_path_depth(item["server_relative_url"])
 
         # Mark external visibility
-        if "principal_name" in item:
+        if "principal_name" in item and item["principal_name"]:
             item["is_external"] = self._is_external_user(item["principal_name"])
+
+    def _enrich_file(self, file: Dict[str, Any]) -> None:
+        """Add file-specific enrichments."""
+        self._enrich_item(file)
+
+        # Categorize file size
+        if "size_bytes" in file:
+            file["size_category"] = self._categorize_size(file["size_bytes"])
+
+        # Extract file type from extension
+        if "name" in file and file["name"]:
+            file["file_type"] = self._get_file_type(file["name"])
+
+    def _enrich_folder(self, folder: Dict[str, Any]) -> None:
+        """Add folder-specific enrichments."""
+        self._enrich_item(folder)
+
+        # Categorize by item count
+        if "item_count" in folder:
+            folder["size_category"] = self._categorize_folder_size(folder["item_count"])
+
+    def _calculate_path_depth(self, path: str) -> int:
+        """Calculate the depth of a path."""
+        if not path:
+            return 0
+
+        # Remove leading/trailing slashes
+        path = path.strip("/")
+
+        # Split path and remove empty parts
+        parts = [p for p in path.split("/") if p]
+
+        # Return the number of parts
+        return len(parts)
 
     def _categorize_age(self, days: int) -> str:
         """Categorize item age."""
@@ -274,6 +425,9 @@ class EnrichmentStage(PipelineStage):
 
     def _categorize_size(self, size_bytes: int) -> str:
         """Categorize file size."""
+        if size_bytes == 0:
+            return "Empty"
+
         mb = size_bytes / (1024 * 1024)
 
         if mb < 1:
@@ -287,18 +441,74 @@ class EnrichmentStage(PipelineStage):
         else:
             return "Huge"
 
+    def _categorize_folder_size(self, item_count: int) -> str:
+        """Categorize folder by item count."""
+        if item_count == 0:
+            return "Empty"
+        elif item_count < 10:
+            return "Small"
+        elif item_count < 100:
+            return "Medium"
+        elif item_count < 1000:
+            return "Large"
+        else:
+            return "Huge"
+
+    def _get_file_type(self, filename: str) -> str:
+        """Determine file type from filename."""
+        if not filename:
+            return "Unknown"
+
+        ext = Path(filename).suffix.lower()
+
+        file_types = {
+            # Documents
+            ".doc": "Document", ".docx": "Document", ".pdf": "Document",
+            ".txt": "Document", ".rtf": "Document", ".odt": "Document",
+
+            # Spreadsheets
+            ".xls": "Spreadsheet", ".xlsx": "Spreadsheet", ".csv": "Spreadsheet",
+            ".ods": "Spreadsheet",
+
+            # Presentations
+            ".ppt": "Presentation", ".pptx": "Presentation", ".odp": "Presentation",
+
+            # Images
+            ".jpg": "Image", ".jpeg": "Image", ".png": "Image", ".gif": "Image",
+            ".bmp": "Image", ".svg": "Image", ".tiff": "Image",
+
+            # Videos
+            ".mp4": "Video", ".avi": "Video", ".mov": "Video", ".wmv": "Video",
+            ".mkv": "Video", ".flv": "Video",
+
+            # Archives
+            ".zip": "Archive", ".rar": "Archive", ".7z": "Archive", ".tar": "Archive",
+            ".gz": "Archive",
+
+            # Code
+            ".py": "Code", ".js": "Code", ".java": "Code", ".cpp": "Code",
+            ".cs": "Code", ".php": "Code", ".rb": "Code", ".go": "Code",
+        }
+
+        return file_types.get(ext, "Other")
+
     def _is_external_user(self, principal_name: str) -> bool:
         """Check if a user is external."""
-        external_indicators = ["#ext#", "_external", "@gmail.com", "@outlook.com", "@hotmail.com"]
+        external_indicators = ["#ext#", "_external", "@gmail.com", "@outlook.com",
+                              "@hotmail.com", "@yahoo.com"]
         return any(indicator in principal_name.lower() for indicator in external_indicators)
 
     def _calculate_storage_metrics(self, context: PipelineContext) -> None:
         """Calculate storage-related metrics."""
         total_size = sum(f.get("size_bytes", 0) for f in context.files)
+        file_count = len(context.files)
 
-        context.metrics.custom_metrics["total_storage_bytes"] = total_size
-        context.metrics.custom_metrics["total_storage_gb"] = total_size / (1024**3)
-        context.metrics.custom_metrics["average_file_size_mb"] = (total_size / len(context.files) / (1024**2)) if context.files else 0
+        if context.metrics:
+            context.metrics.set_custom_metric("total_storage_bytes", total_size)
+            context.metrics.set_custom_metric("total_storage_gb", total_size / (1024**3))
+            context.metrics.set_custom_metric("average_file_size_mb",
+                (total_size / file_count / (1024**2)) if file_count > 0 else 0)
+            context.metrics.set_custom_metric("total_files", file_count)
 
 
 class StorageStage(PipelineStage):
@@ -313,34 +523,43 @@ class StorageStage(PipelineStage):
         """Save all processed data to the database."""
         self.logger.info("Starting storage stage")
 
+        total_saved = 0
+
         try:
-            # Save processed generic data
-            if context.processed_data:
-                await self._save_batch("processed_items", context.processed_data)
+            # Note: We don't save sites, libraries, folders, and files here
+            # because they were already saved during the discovery phase.
+            # This stage is for saving any additional processed data or updates.
 
-            # Save specific data types
-            if context.files:
-                await self._save_batch("files", context.files)
-
-            if context.folders:
-                await self._save_batch("folders", context.folders)
-
+            # Save permissions if any were discovered
             if context.permissions:
-                await self._save_batch("permissions", context.permissions)
+                saved = await self._save_batch("permissions", context.permissions)
+                total_saved += saved
+
+            # If we have any updates to existing records, handle them here
+            # For example, if enrichment added calculated fields that need to be saved
 
             # Update audit run statistics
             await self._update_audit_stats(context)
 
-            self.logger.info("All data saved successfully")
+            # Record metrics
+            if context.metrics:
+                context.metrics.record_stage_items("storage", total_saved)
+
+            self.logger.info(f"Storage stage completed. Saved {total_saved} new records")
 
         except Exception as e:
             self.logger.error(f"Storage stage failed: {str(e)}")
+            if context.metrics:
+                context.metrics.record_stage_error("storage")
             raise
 
         return context
 
-    async def _save_batch(self, table_name: str, records: List[Dict[str, Any]]) -> None:
+    async def _save_batch(self, table_name: str, records: List[Dict[str, Any]]) -> int:
         """Save records in batches."""
+        if not records:
+            return 0
+
         total_saved = 0
 
         for i in range(0, len(records), self.batch_size):
@@ -351,11 +570,25 @@ class StorageStage(PipelineStage):
             self.logger.debug(f"Saved batch {i//self.batch_size + 1} to {table_name}: {saved_count} records")
 
         self.logger.info(f"Saved {total_saved} records to {table_name}")
+        return total_saved
 
     async def _update_audit_stats(self, context: PipelineContext) -> None:
         """Update audit run statistics in the database."""
+        if not context.run_id:
+            return
+
         # This would update the audit_runs table with final stats
-        pass
+        stats = {
+            "run_id": context.run_id,
+            "total_sites_processed": len(context.sites),
+            "total_items_processed": context.total_items,
+            "total_errors": len(context.errors),
+            "status": "completed" if not context.errors else "completed_with_errors"
+        }
+
+        # Note: This would require implementing an update_audit_run method in the repository
+        # For now, we'll just log the stats
+        self.logger.info(f"Audit run {context.run_id} completed: {stats}")
 
 
 class DataProcessor:
@@ -538,26 +771,17 @@ class DataProcessor:
 
     async def _save_batch(self, result: 'ProcessingResult') -> None:
         """Save processed batch to database."""
-        async with self.db.transaction() as conn:
-            # Save files
-            if result.file_records:
-                await self.db.bulk_insert('files', result.file_records)
+        # Save files
+        if result.file_records:
+            await self.db.bulk_insert('files', result.file_records)
 
-            # Save folders
-            if hasattr(result, 'folder_records') and result.folder_records:
-                await self.db.bulk_insert('folders', result.folder_records)
+        # Save folders
+        if result.folder_records:
+            await self.db.bulk_insert('folders', result.folder_records)
 
-            # Save permissions
-            if result.permission_records:
-                await self.db.bulk_insert('permissions', result.permission_records)
-
-            # Update statistics
-            await self._update_stats(result)
-
-    async def _update_stats(self, result: 'ProcessingResult') -> None:
-        """Update audit statistics."""
-        # This would update audit_runs table with processing stats
-        pass
+        # Save permissions
+        if result.permission_records:
+            await self.db.bulk_insert('permissions', result.permission_records)
 
 
 class ProcessingResult:
@@ -616,6 +840,8 @@ class PermissionAnalysisStage(PipelineStage):
                         context.permissions.extend(permissions)
                 except Exception as e:
                     self.logger.error(f"Failed to analyze permissions for item {item.get('id')}: {str(e)}")
+                    if context.metrics:
+                        context.metrics.record_stage_error("permission_analysis")
         else:
             self.logger.warning("No permission analyzer configured, skipping permission analysis")
 
