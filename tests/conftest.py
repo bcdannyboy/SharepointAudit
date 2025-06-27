@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from src.api.auth_manager import AuthenticationManager
 from src.api.sharepoint_client import SharePointAPIClient
+from src.api.graph_client import GraphAPIClient
 from src.utils.retry_handler import RetryStrategy, RetryConfig
 from src.utils.rate_limiter import RateLimiter
 from src.utils.config_parser import AuthConfig
@@ -40,3 +41,8 @@ def retry_strategy():
 @pytest.fixture
 def api_client(auth_manager, retry_strategy):
     return SharePointAPIClient(auth_manager, retry_strategy, RateLimiter())
+
+
+@pytest.fixture
+def graph_client(auth_manager, retry_strategy):
+    return GraphAPIClient(auth_manager, retry_strategy, RateLimiter())
