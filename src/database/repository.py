@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
+from datetime import datetime
 
 from .models import SCHEMA_STATEMENTS, INDEX_STATEMENTS, VIEW_STATEMENTS
 from .optimizer import DatabaseOptimizer
@@ -90,4 +92,40 @@ class DatabaseRepository:
             rows = cursor.fetchall()
             columns = [d[0] for d in cursor.description]
             return [dict(zip(columns, r)) for r in rows]
+
+    async def save_checkpoint(
+        self,
+        run_id: str,
+        checkpoint_type: str,
+        checkpoint_data: Any,
+    ) -> None:
+        data = json.dumps(checkpoint_data)
+        query = (
+            "INSERT INTO audit_checkpoints (run_id, checkpoint_type, checkpoint_data)"
+            " VALUES (?, ?, ?)"
+        )
+        async with self.transaction() as conn:
+            conn.execute(query, (run_id, checkpoint_type, data))
+
+    async def get_latest_checkpoint(
+        self, run_id: str, checkpoint_type: str
+    ) -> Optional[Mapping[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT checkpoint_data, created_at FROM audit_checkpoints "
+                "WHERE run_id = ? AND checkpoint_type = ? ORDER BY created_at DESC LIMIT 1",
+                (run_id, checkpoint_type),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {"checkpoint_data": row[0], "created_at": row[1]}
+
+    async def delete_checkpoints_before(self, cutoff_date: datetime) -> None:
+        async with self.transaction() as conn:
+            conn.execute(
+                "DELETE FROM audit_checkpoints WHERE created_at < ?",
+                (cutoff_date.isoformat(),),
+            )
+
 

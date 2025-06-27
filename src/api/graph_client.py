@@ -93,3 +93,10 @@ class GraphAPIClient:
 
         operation_id = f"batch:{url}"
         return await self.retry_strategy.execute_with_retry(operation_id, _do_batch)
+
+    async def get_all_sites_delta(self, delta_token: str | None = None) -> Any:
+        """Retrieve all sites using the delta query."""
+        url = "https://graph.microsoft.com/v1.0/sites/delta"
+        if delta_token:
+            url += f"?token={delta_token}"
+        return await self.get_with_retry(url)
