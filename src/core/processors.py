@@ -407,7 +407,11 @@ class EnrichmentStage(PipelineStage):
         # Split path and remove empty parts
         parts = [p for p in path.split("/") if p]
 
-        # Return the number of parts
+        # If the last part looks like a file name (has a dot), exclude it
+        if parts and "." in parts[-1]:
+            parts = parts[:-1]
+
+        # Return the number of directory segments
         return len(parts)
 
     def _categorize_age(self, days: int) -> str:
