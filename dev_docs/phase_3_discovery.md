@@ -15,7 +15,7 @@ This phase brings together the API client and the database layer to perform the 
 ## Prerequisites
 
 - [Phase 1: Core Authentication & API Client](./phase_1_auth_api.md)
-- [Phase 2: Database Layer & Models](./phase_2_database.md)
+- [Phase 2: Database Layer & Models](./COMPLETE_phase_2_database.md)
 
 ## Deliverables
 

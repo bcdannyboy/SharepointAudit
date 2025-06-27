@@ -14,7 +14,7 @@ The dashboard is the primary user interface for data analysis and is a key deliv
 
 ## Prerequisites
 
-- [Phase 2: Database Layer & Models](./phase_2_database.md)
+- [Phase 2: Database Layer & Models](./COMPLETE_phase_2_database.md)
 - A sample database populated with audit data from previous phases.
 
 ## Deliverables
