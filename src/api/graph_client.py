@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 
@@ -99,4 +99,6 @@ class GraphAPIClient:
         url = "https://graph.microsoft.com/v1.0/sites/delta"
         if delta_token:
             url += f"?token={delta_token}"
+
+        # Return the raw data - let the discovery module handle conversion
         return await self.get_with_retry(url)
