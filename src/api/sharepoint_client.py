@@ -42,3 +42,41 @@ class SharePointAPIClient:
                 return await resp.json()
 
         return await self.retry_strategy.execute_with_retry(url, _do_get)
+
+    async def post_with_retry(self, url: str, **kwargs) -> Any:
+        async def _do_post():
+            await self.rate_limiter.acquire("simple_get")
+            async with aiohttp.ClientSession() as session:
+                resp = await session.post(url, **kwargs)
+                if resp.status == 429:
+                    retry_after = int(resp.headers.get("Retry-After", "1"))
+                    raise SharePointAPIError(
+                        "Too Many Requests",
+                        status_code=429,
+                        retry_after=retry_after,
+                    )
+                if resp.status >= 400:
+                    raise SharePointAPIError(f"HTTP {resp.status}", status_code=resp.status)
+                return await resp.json()
+
+        return await self.retry_strategy.execute_with_retry(url, _do_post)
+
+    async def batch_request(self, url: str, requests: list[dict]) -> Any:
+        async def _do_batch():
+            await self.rate_limiter.acquire("batch_request")
+            payload = {"requests": requests}
+            async with aiohttp.ClientSession() as session:
+                resp = await session.post(url, json=payload)
+                if resp.status == 429:
+                    retry_after = int(resp.headers.get("Retry-After", "1"))
+                    raise SharePointAPIError(
+                        "Too Many Requests",
+                        status_code=429,
+                        retry_after=retry_after,
+                    )
+                if resp.status >= 400:
+                    raise SharePointAPIError(f"HTTP {resp.status}", status_code=resp.status)
+                return await resp.json()
+
+        operation_id = f"batch:{url}"
+        return await self.retry_strategy.execute_with_retry(operation_id, _do_batch)
