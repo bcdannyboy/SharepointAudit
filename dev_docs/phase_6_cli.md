@@ -14,7 +14,7 @@ The CLI is the main entry point for the user and is a critical component of the 
 
 ## Prerequisites
 
-- [Phase 2: Database Layer & Models](./phase_2_database.md)
+- [Phase 2: Database Layer & Models](./COMPLETE_phase_2_database.md)
 - [Phase 5: Permission Analysis](./phase_5_permissions.md) (for the full `audit` command)
 
 ## Deliverables
