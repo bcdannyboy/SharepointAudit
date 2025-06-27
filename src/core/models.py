@@ -28,7 +28,7 @@ class AuditItem:
 @dataclass
 class Site(AuditItem):
     """Represents a SharePoint site."""
-    url: str
+    url: str = ""
     title: Optional[str] = None
     description: Optional[str] = None
     storage_used: Optional[int] = None
@@ -65,7 +65,7 @@ class Site(AuditItem):
 @dataclass
 class Library(AuditItem):
     """Represents a document library."""
-    site_id: str
+    site_id: str = ""
     description: Optional[str] = None
     item_count: int = 0
     is_hidden: bool = False
@@ -79,7 +79,7 @@ class Library(AuditItem):
 @dataclass
 class Folder(AuditItem):
     """Represents a folder."""
-    library_id: str
+    library_id: str = ""
     parent_folder_id: Optional[str] = None
     server_relative_url: str = ""
     item_count: int = 0
@@ -94,7 +94,7 @@ class Folder(AuditItem):
 @dataclass
 class File(AuditItem):
     """Represents a file."""
-    library_id: str
+    library_id: str = ""
     folder_id: Optional[str] = None
     server_relative_url: str = ""
     size_bytes: int = 0
