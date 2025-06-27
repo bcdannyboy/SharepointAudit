@@ -131,14 +131,23 @@ def test_discovery_resumes_from_checkpoint(discovery_module, mock_graph_client, 
 
         mock_graph_client.get_all_sites_delta.return_value = result
 
-        discovery_module.discover_site_content = AsyncMock()
+        # Track which sites actually get their content discovered
+        sites_processed = []
+
+        # Mock the internal discovery methods instead of the main method
+        async def mock_discover_libraries(site):
+            sites_processed.append(site.id)
+            return []
+
+        discovery_module._discover_libraries = mock_discover_libraries
+        discovery_module._discover_lists = AsyncMock(return_value=[])
+        discovery_module._discover_subsites = AsyncMock(return_value=[])
 
         await discovery_module.run_discovery("test_run")
 
         # Should only process site2 since site1 is marked as completed
-        assert discovery_module.discover_site_content.call_count == 1
-        call_args = discovery_module.discover_site_content.call_args_list[0]
-        assert call_args[0][1].id == "site2"
+        assert len(sites_processed) == 1
+        assert sites_processed[0] == "site2"
 
     asyncio.run(run())
 
