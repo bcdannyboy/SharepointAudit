@@ -1,0 +1,15 @@
+{
+  "auth": {
+    "tenant_id": "YOUR_TENANT_ID",
+    "client_id": "YOUR_CLIENT_ID",
+    "certificate_path": "path/to/your/certificate.pem",
+    "certificate_password": null
+  },
+  "db": {
+    "path": "audit.db"
+  },
+  "target_sites": [
+    "https://yourtenant.sharepoint.com/sites/Site1",
+    "https://yourtenant.sharepoint.com/sites/Site2"
+  ]
+}
