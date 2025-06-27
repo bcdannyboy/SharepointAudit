@@ -7,9 +7,10 @@ class SharePointAuditError(Exception):
 class APIError(SharePointAuditError):
     """Raised for errors related to SharePoint or Graph API calls."""
 
-    def __init__(self, message, status_code=None):
+    def __init__(self, message, status_code=None, retry_after: int | None = None):
         super().__init__(message)
         self.status_code = status_code
+        self.retry_after = retry_after
 
 
 class SharePointAPIError(APIError):
