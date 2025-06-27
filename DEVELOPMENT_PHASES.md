@@ -1141,7 +1141,7 @@ A CI pipeline (e.g., using GitHub Actions) will be set up to run on every push a
 | Phase 0: Setup | ✅ Completed | | | |
 | Phase 1: Auth & API | ✅ Completed | | | |
 | Phase 2: Database | ✅ Completed | | | |
-| Phase 3: Discovery | ⬜ Not Started | | | |
+| Phase 3: Discovery | ✅ Completed | | | |
 | Phase 4: Pipeline | ⬜ Not Started | | | |
 | Phase 5: Permissions | ⬜ Not Started | | | |
 | Phase 6: CLI | ⬜ Not Started | | | |
