@@ -241,7 +241,15 @@ class EnrichmentStage(PipelineStage):
         # Calculate path depth
         if "server_relative_url" in item:
             path = item["server_relative_url"]
-            item["path_depth"] = path.count("/") - 1
+            # Split path and remove empty parts
+            path_parts = [p for p in path.split("/") if p]
+            # In SharePoint paths: /sites/test/docs/folder1/folder2/file.pdf
+            # We count the folder depth excluding the root "sites" and the file itself
+            # So we subtract 2 (1 for "sites", 1 for the file)
+            if len(path_parts) > 1:
+                item["path_depth"] = len(path_parts) - 2
+            else:
+                item["path_depth"] = 0
 
         # Categorize file size
         if "size_bytes" in item:
