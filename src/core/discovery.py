@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Iterable
+import logging
+from typing import Any, Dict, List, Optional
+from types import SimpleNamespace
 
 from ..api.graph_client import GraphAPIClient
 from ..api.sharepoint_client import SharePointAPIClient
 from ..database.repository import DatabaseRepository
 from .progress_tracker import ProgressTracker
 from ..utils.checkpoint_manager import CheckpointManager
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoveryModule:
@@ -19,77 +23,342 @@ class DiscoveryModule:
         sp_client: SharePointAPIClient,
         db_repo: DatabaseRepository,
         checkpoint_manager: CheckpointManager,
+        max_concurrent_sites: int = 20,
+        max_concurrent_operations: int = 50,
     ) -> None:
         self.graph_client = graph_client
         self.sp_client = sp_client
         self.db_repo = db_repo
         self.checkpoints = checkpoint_manager
         self.progress_tracker = ProgressTracker()
+        self.site_semaphore = asyncio.Semaphore(max_concurrent_sites)
+        self.operation_semaphore = asyncio.Semaphore(max_concurrent_operations)
 
     async def run_discovery(self, run_id: str) -> None:
-        sites_state = await self.checkpoints.restore_checkpoint(run_id, "sites_delta_token")
-        result = await self.graph_client.get_all_sites_delta(sites_state)
-        if getattr(result, "delta_token", None):
+        """Orchestrates the full discovery process."""
+        self.progress_tracker.start("Site Discovery")
+
+        # Get delta token from checkpoint
+        sites_delta_token = await self.checkpoints.restore_checkpoint(run_id, "sites_delta_token")
+
+        # Discover all sites using delta query
+        result = await self.graph_client.get_all_sites_delta(sites_delta_token)
+
+        # Save sites to database
+        if hasattr(result, 'items') and result.items:
+            site_records = []
+            for site in result.items:
+                site_data = self._site_to_dict(site)
+                if site_data:
+                    site_records.append(site_data)
+
+            if site_records:
+                await self.db_repo.bulk_insert('sites', site_records)
+                logger.info(f"Saved {len(site_records)} sites to database")
+
+        # Save new delta token
+        if hasattr(result, 'delta_token') and result.delta_token:
             await self.checkpoints.save_checkpoint(run_id, "sites_delta_token", result.delta_token)
-        for site in result.items:
-            key = f"site_{getattr(site, 'id', '')}_status"
-            status = await self.checkpoints.restore_checkpoint(run_id, key)
-            if status == "completed":
-                self.progress_tracker.skip(key, "Already processed")
-                continue
-            await self.discover_site_content(run_id, site)
-            await self.checkpoints.save_checkpoint(run_id, key, "completed")
+
+        self.progress_tracker.finish("Site Discovery", f"Found {len(result.items) if hasattr(result, 'items') else 0} sites")
+
+        # Discover content for each site in parallel with semaphore control
+        if hasattr(result, 'items') and result.items:
+            tasks = []
+            for site in result.items:
+                task = self._discover_site_with_semaphore(run_id, site)
+                tasks.append(task)
+
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _discover_site_with_semaphore(self, run_id: str, site: Any) -> None:
+        """Discovers site content with semaphore control."""
+        async with self.site_semaphore:
+            try:
+                await self.discover_site_content(run_id, site)
+            except Exception as e:
+                logger.error(f"Error discovering site {getattr(site, 'id', 'unknown')}: {e}")
 
     async def discover_site_content(self, run_id: str, site: Any) -> None:
-        """Discover lists, libraries and subsites for a single site."""
-        tasks = [
-            self._discover_libraries(site),
-            self._discover_lists(site),
-            self._discover_subsites(run_id, site),
-        ]
-        await asyncio.gather(*tasks)
+        """Discovers all content for a single site."""
+        site_id = getattr(site, 'id', '')
+        site_title = getattr(site, 'title', getattr(site, 'displayName', 'Unknown'))
 
-    async def _discover_libraries(self, site: Any) -> Iterable[Any]:
+        # Check if this site was already processed
+        checkpoint_key = f"site_{site_id}_status"
+        status = await self.checkpoints.restore_checkpoint(run_id, checkpoint_key)
+        if status == "completed":
+            self.progress_tracker.skip(f"Site {site_title}", "Already processed")
+            return
+
+        self.progress_tracker.start(f"Site {site_title}")
+
+        try:
+            # Discover libraries, lists, and subsites in parallel
+            tasks = [
+                self._discover_libraries(site),
+                self._discover_lists(site),
+                self._discover_subsites(run_id, site),
+            ]
+
+            libraries, lists, subsites = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Discover folders and files within libraries
+            if isinstance(libraries, list):
+                library_tasks = []
+                for library in libraries:
+                    if isinstance(library, dict):
+                        task = self._discover_library_contents(site, library)
+                        library_tasks.append(task)
+
+                if library_tasks:
+                    await asyncio.gather(*library_tasks, return_exceptions=True)
+
+            # Mark site as completed
+            await self.checkpoints.save_checkpoint(run_id, checkpoint_key, "completed")
+            self.progress_tracker.finish(f"Site {site_title}")
+
+        except Exception as e:
+            logger.error(f"Error processing site {site_title}: {e}")
+            self.progress_tracker.finish(f"Site {site_title}", f"Error: {str(e)}")
+
+    async def _discover_libraries(self, site: Any) -> List[Dict[str, Any]]:
         """Enumerate document libraries for the given site."""
-        site_id = getattr(site, "id", None)
-        if site_id is None:
-            return []
+        async with self.operation_semaphore:
+            site_id = getattr(site, 'id', None)
+            if not site_id:
+                return []
 
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
-        data = await self.graph_client.get_with_retry(url)
-        libraries = data.get("value", [])
-        records = [
-            {
-                "library_id": lib.get("id"),
-                "site_id": site_id,
-                "name": lib.get("name"),
-            }
-            for lib in libraries
-        ]
-        if records:
-            await self.db_repo.bulk_insert("libraries", records)
-        return libraries
+            try:
+                url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
+                data = await self.graph_client.get_with_retry(url)
+                libraries = data.get("value", [])
 
-    async def _discover_lists(self, site: Any) -> Iterable[Any]:
+                # Save libraries to database
+                if libraries:
+                    records = []
+                    for lib in libraries:
+                        record = {
+                            "library_id": lib.get("id"),
+                            "site_id": site_id,
+                            "name": lib.get("name", ""),
+                            "description": lib.get("description"),
+                            "created_at": lib.get("createdDateTime"),
+                        }
+                        records.append(record)
+
+                    if records:
+                        await self.db_repo.bulk_insert("libraries", records)
+                        logger.debug(f"Saved {len(records)} libraries for site {site_id}")
+
+                return libraries
+
+            except Exception as e:
+                logger.error(f"Error discovering libraries for site {site_id}: {e}")
+                return []
+
+    async def _discover_lists(self, site: Any) -> List[Dict[str, Any]]:
         """Enumerate lists for the given site."""
-        site_id = getattr(site, "id", None)
-        if site_id is None:
-            return []
+        async with self.operation_semaphore:
+            site_id = getattr(site, 'id', None)
+            if not site_id:
+                return []
 
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists"
-        data = await self.graph_client.get_with_retry(url)
-        return data.get("value", [])
+            try:
+                url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists"
+                data = await self.graph_client.get_with_retry(url)
+                lists = data.get("value", [])
 
-    async def _discover_subsites(self, run_id: str, site: Any) -> Iterable[Any]:
+                # Note: Lists are not document libraries, so we might want to store them separately
+                # For now, we'll just return them
+
+                return lists
+
+            except Exception as e:
+                logger.error(f"Error discovering lists for site {site_id}: {e}")
+                return []
+
+    async def _discover_subsites(self, run_id: str, site: Any) -> List[Dict[str, Any]]:
         """Discover subsites and recursively process their contents."""
-        site_id = getattr(site, "id", None)
-        if site_id is None:
-            return []
+        async with self.operation_semaphore:
+            site_id = getattr(site, 'id', None)
+            if not site_id:
+                return []
 
-        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/sites"
-        data = await self.graph_client.get_with_retry(url)
-        subsites = data.get("value", [])
-        for sub in subsites:
-            await self.discover_site_content(run_id, sub)
-        return subsites
+            try:
+                url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/sites"
+                data = await self.graph_client.get_with_retry(url)
+                subsites = data.get("value", [])
 
+                # Recursively discover content for each subsite
+                if subsites:
+                    tasks = []
+                    for subsite in subsites:
+                        # Convert dict to object-like structure if needed
+                        if isinstance(subsite, dict):
+                            subsite_obj = SimpleNamespace(**subsite)
+                        else:
+                            subsite_obj = subsite
+
+                        task = self._discover_site_with_semaphore(run_id, subsite_obj)
+                        tasks.append(task)
+
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+                return subsites
+
+            except Exception as e:
+                logger.error(f"Error discovering subsites for site {site_id}: {e}")
+                return []
+
+    async def _discover_library_contents(self, site: Any, library: Dict[str, Any]) -> None:
+        """Discover folders and files within a library."""
+        library_id = library.get("id")
+        library_name = library.get("name", "Unknown")
+
+        if not library_id:
+            return
+
+        try:
+            # Start with root folder
+            await self._discover_folder_contents(site, library, None, "/")
+
+        except Exception as e:
+            logger.error(f"Error discovering contents of library {library_name}: {e}")
+
+    async def _discover_folder_contents(
+        self,
+        site: Any,
+        library: Dict[str, Any],
+        parent_folder_id: Optional[str],
+        folder_path: str,
+        page_size: int = 200
+    ) -> None:
+        """Recursively discover folders and files within a folder."""
+        async with self.operation_semaphore:
+            site_id = getattr(site, 'id', None)
+            library_id = library.get("id")
+
+            if not site_id or not library_id:
+                return
+
+            try:
+                # Build the URL for listing folder contents
+                if folder_path == "/":
+                    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{library_id}/root/children"
+                else:
+                    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{library_id}/root:{folder_path}:/children"
+
+                # Add query parameters for batching
+                url += f"?$top={page_size}"
+
+                # Keep fetching pages until we get all items
+                all_folders = []
+                all_files = []
+
+                while url:
+                    data = await self.graph_client.get_with_retry(url)
+                    items = data.get("value", [])
+
+                    # Separate folders and files
+                    folders = []
+                    files = []
+
+                    for item in items:
+                        if "folder" in item:  # It's a folder
+                            folder_record = {
+                                "folder_id": item.get("id"),
+                                "library_id": library_id,
+                                "parent_folder_id": parent_folder_id,
+                                "name": item.get("name", ""),
+                                "server_relative_url": item.get("webUrl", ""),
+                                "created_at": item.get("createdDateTime"),
+                                "created_by": item.get("createdBy", {}).get("user", {}).get("email"),
+                                "modified_at": item.get("lastModifiedDateTime"),
+                                "modified_by": item.get("lastModifiedBy", {}).get("user", {}).get("email"),
+                            }
+                            folders.append(folder_record)
+                            all_folders.append(folder_record)
+                        else:  # It's a file
+                            file_record = {
+                                "file_id": item.get("id"),
+                                "folder_id": parent_folder_id,
+                                "library_id": library_id,
+                                "name": item.get("name", ""),
+                                "server_relative_url": item.get("webUrl", ""),
+                                "size_bytes": item.get("size", 0),
+                                "content_type": item.get("file", {}).get("mimeType"),
+                                "created_at": item.get("createdDateTime"),
+                                "created_by": item.get("createdBy", {}).get("user", {}).get("email"),
+                                "modified_at": item.get("lastModifiedDateTime"),
+                                "modified_by": item.get("lastModifiedBy", {}).get("user", {}).get("email"),
+                            }
+                            files.append(file_record)
+                            all_files.append(file_record)
+
+                    # Get next page URL if available
+                    url = data.get("@odata.nextLink")
+
+                # Save folders and files to database in batches
+                if all_folders:
+                    await self.db_repo.bulk_insert("folders", all_folders)
+                    logger.debug(f"Saved {len(all_folders)} folders from {folder_path}")
+
+                if all_files:
+                    await self.db_repo.bulk_insert("files", all_files)
+                    logger.debug(f"Saved {len(all_files)} files from {folder_path}")
+
+                # Recursively discover contents of subfolders
+                if all_folders:
+                    tasks = []
+                    for folder in all_folders:
+                        folder_name = folder["name"]
+                        folder_id = folder["folder_id"]
+                        new_path = f"{folder_path}/{folder_name}" if folder_path != "/" else f"/{folder_name}"
+
+                        task = self._discover_folder_contents(
+                            site, library, folder_id, new_path, page_size
+                        )
+                        tasks.append(task)
+
+                    # Process subfolders with limited concurrency
+                    if tasks:
+                        # Process in smaller batches to avoid overwhelming the API
+                        batch_size = 5
+                        for i in range(0, len(tasks), batch_size):
+                            batch = tasks[i:i + batch_size]
+                            await asyncio.gather(*batch, return_exceptions=True)
+
+            except Exception as e:
+                logger.error(f"Error discovering folder contents at {folder_path}: {e}")
+
+    def _site_to_dict(self, site: Any) -> Optional[Dict[str, Any]]:
+        """Convert a site object to a dictionary for database storage."""
+        try:
+            # Handle both dict and object-like structures
+            if isinstance(site, dict):
+                site_dict = site
+            else:
+                # Try to extract attributes
+                site_dict = {
+                    "id": getattr(site, "id", None),
+                    "displayName": getattr(site, "displayName", None),
+                    "name": getattr(site, "name", None),
+                    "webUrl": getattr(site, "webUrl", None),
+                    "description": getattr(site, "description", None),
+                    "createdDateTime": getattr(site, "createdDateTime", None),
+                    "lastModifiedDateTime": getattr(site, "lastModifiedDateTime", None),
+                }
+
+            return {
+                "site_id": site_dict.get("id"),
+                "url": site_dict.get("webUrl", ""),
+                "title": site_dict.get("displayName") or site_dict.get("name", ""),
+                "description": site_dict.get("description"),
+                "created_at": site_dict.get("createdDateTime"),
+                "last_modified": site_dict.get("lastModifiedDateTime"),
+            }
+
+        except Exception as e:
+            logger.error(f"Error converting site to dict: {e}")
+            return None

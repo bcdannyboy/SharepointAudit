@@ -1,8 +1,19 @@
 import logging
 import logging.handlers
-from pythonjsonlogger import jsonlogger
-import yaml
+import logging.config
 from pathlib import Path
+
+try:
+    from pythonjsonlogger import jsonlogger
+except ImportError:
+    # Fallback if pythonjsonlogger is not available
+    jsonlogger = None
+
+try:
+    import yaml
+except ImportError:
+    # Fallback if yaml is not available
+    yaml = None
 
 
 class LoggingConfiguration:
@@ -13,6 +24,11 @@ class LoggingConfiguration:
         config_path: str = "config/logging.yaml", default_level=logging.INFO
     ):
         """Configure application logging from a YAML file."""
+        if yaml is None:
+            logging.basicConfig(level=default_level)
+            logging.warning("YAML module not available. Using basic configuration.")
+            return
+
         path = Path(config_path)
         if path.exists():
             with open(path, "rt") as f:
