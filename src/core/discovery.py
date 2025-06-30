@@ -40,6 +40,15 @@ class DiscoveryModule:
         self.site_semaphore = asyncio.Semaphore(max_concurrent_sites)
         self.operation_semaphore = asyncio.Semaphore(max_concurrent_operations)
 
+        # Progress tracking counters
+        self.discovered_counts = {
+            "sites": 0,
+            "libraries": 0,
+            "folders": 0,
+            "files": 0
+        }
+        self.processed_sites = 0
+
     async def _run_api_task(self, coro):
         if self.concurrency_manager:
             return await self.concurrency_manager.run_api_task(coro)
@@ -80,6 +89,7 @@ class DiscoveryModule:
                 await self.checkpoints.save_checkpoint(run_id, "sites_delta_token", delta_token)
 
         sites_count = len(result.get('value', [])) if isinstance(result, dict) else 0
+        self.discovered_counts["sites"] = sites_count
         self.progress_tracker.finish("Site Discovery", f"Found {sites_count} sites")
 
         # Discover content for each site in parallel with semaphore control
@@ -90,6 +100,16 @@ class DiscoveryModule:
                 tasks.append(task)
 
             await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Final progress summary
+        logger.info(
+            f"\n=== Discovery Complete ===\n"
+            f"Sites discovered: {self.discovered_counts['sites']}\n"
+            f"Libraries discovered: {self.discovered_counts['libraries']}\n"
+            f"Folders discovered: {self.discovered_counts['folders']}\n"
+            f"Files discovered: {self.discovered_counts['files']}\n"
+            f"========================="
+        )
 
     async def _discover_site_with_semaphore(self, run_id: str, site: Any) -> None:
         """Discovers site content with semaphore control."""
@@ -142,6 +162,12 @@ class DiscoveryModule:
 
             # Mark site as completed
             await self.checkpoints.save_checkpoint(run_id, checkpoint_key, "completed")
+            self.processed_sites += 1
+            logger.info(
+                f"Site {self.processed_sites}/{self.discovered_counts['sites']}: {site_title} - "
+                f"Total progress: {self.discovered_counts['libraries']} libraries, "
+                f"{self.discovered_counts['folders']} folders, {self.discovered_counts['files']} files"
+            )
             self.progress_tracker.finish(f"Site {site_title}")
 
         except Exception as e:
@@ -187,7 +213,8 @@ class DiscoveryModule:
 
                     if records:
                         await self.db_repo.bulk_insert("libraries", records)
-                        logger.debug(f"Saved {len(records)} libraries for site {site_id}")
+                        self.discovered_counts["libraries"] += len(records)
+                        logger.info(f"Discovered {len(records)} libraries in site (Total: {self.discovered_counts['libraries']})")
 
                 if self.cache:
                     await self.cache.set(cache_key, libraries, ttl=3600)
@@ -295,8 +322,23 @@ class DiscoveryModule:
             return
 
         try:
+            logger.debug(f"Starting discovery of library: {library_name}")
+
             # Start with root folder
             await self._discover_folder_contents(site, library, None, "/")
+
+            # Check if it's time for a progress update
+            current_time = time.time()
+            if current_time - self.last_progress_time > self.progress_interval:
+                self.last_progress_time = current_time
+                logger.info(
+                    f"\n=== Progress Update ===\n"
+                    f"Sites processed: {self.processed_sites}/{self.discovered_counts['sites']}\n"
+                    f"Libraries discovered: {self.discovered_counts['libraries']}\n"
+                    f"Folders discovered: {self.discovered_counts['folders']}\n"
+                    f"Files discovered: {self.discovered_counts['files']}\n"
+                    f"=====================\n"
+                )
 
         except Exception as e:
             logger.error(f"Error discovering contents of library {library_name}: {e}")
@@ -383,11 +425,19 @@ class DiscoveryModule:
                 # Save folders and files to database in batches
                 if all_folders:
                     await self.db_repo.bulk_insert("folders", all_folders)
-                    logger.debug(f"Saved {len(all_folders)} folders from {folder_path}")
+                    self.discovered_counts["folders"] += len(all_folders)
+                    logger.info(
+                        f"Discovered {len(all_folders)} folders in {folder_path} "
+                        f"(Total: {self.discovered_counts['folders']} folders)"
+                    )
 
                 if all_files:
                     await self.db_repo.bulk_insert("files", all_files)
-                    logger.debug(f"Saved {len(all_files)} files from {folder_path}")
+                    self.discovered_counts["files"] += len(all_files)
+                    logger.info(
+                        f"Discovered {len(all_files)} files in {folder_path} "
+                        f"(Total: {self.discovered_counts['files']} files)"
+                    )
 
                 # Recursively discover contents of subfolders
                 if all_folders:
@@ -409,6 +459,13 @@ class DiscoveryModule:
                         for i in range(0, len(tasks), batch_size):
                             batch = tasks[i:i + batch_size]
                             await asyncio.gather(*batch, return_exceptions=True)
+
+                            # Log progress every 100 folders
+                            if self.discovered_counts["folders"] % 100 == 0 and self.discovered_counts["folders"] > 0:
+                                logger.info(
+                                    f"Progress update - Processing site {self.processed_sites}/{self.discovered_counts['sites']}: "
+                                    f"Folders: {self.discovered_counts['folders']}, Files: {self.discovered_counts['files']}"
+                                )
 
             except Exception as e:
                 logger.error(f"Error discovering folder contents at {folder_path}: {e}")

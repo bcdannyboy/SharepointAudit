@@ -454,27 +454,9 @@ Contributions are welcome! Please follow these guidelines:
 - Write tests for new features
 - Run pre-commit hooks
 
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- Built with Python 3.11+ for modern async capabilities
-- Uses Microsoft Graph API and SharePoint REST APIs
-- Streamlit for the interactive dashboard
-- SQLAlchemy for database operations
-- Click for the CLI interface
-
 ## 📞 Support
 
 For issues, questions, or contributions:
 - Open an issue on GitHub
 - Check existing documentation in `/docs` and `/dev_docs`
 - Review test cases for usage examples
-
----
-
-**Last Updated**: December 2024
-**Version**: 1.0.0
-**Status**: Production Ready
