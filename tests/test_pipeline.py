@@ -2,7 +2,7 @@
 
 import asyncio
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.core.pipeline import AuditPipeline, PipelineContext, PipelineStage, ParallelProcessor
@@ -271,7 +271,7 @@ def test_enrichment_stage():
         context.processed_data = [
             {
                 "name": "old_file.pdf",
-                "created_at": datetime(2020, 1, 1),
+                "created_at": datetime(2020, 1, 1, tzinfo=timezone.utc),
                 "server_relative_url": "/sites/test/docs/folder1/folder2/file.pdf"
             }
         ]
@@ -280,7 +280,7 @@ def test_enrichment_stage():
                 "file_id": "1",
                 "name": "large_file.zip",
                 "size_bytes": 5 * 1024 * 1024,  # 5 MB
-                "created_at": datetime(2023, 1, 1),
+                "created_at": datetime(2023, 1, 1, tzinfo=timezone.utc),
                 "server_relative_url": "/sites/test/file.zip"
             }
         ]
@@ -552,7 +552,7 @@ def test_transformation_date_parsing():
             "2023-01-01T00:00:00Z",
             "2023-01-01T00:00:00.123Z",
             "2023-01-01 00:00:00",
-            datetime(2023, 1, 1),
+            datetime(2023, 1, 1, tzinfo=timezone.utc),
             None,
             ""
         ]

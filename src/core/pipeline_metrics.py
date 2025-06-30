@@ -4,7 +4,7 @@ import logging
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class PipelineMetrics:
     items_failed: int = 0
 
     # Custom metrics that stages can set
-    custom_metrics: Dict[str, any] = field(default_factory=dict)
+    custom_metrics: Dict[str, Any] = field(default_factory=dict)
 
     # Performance metrics
     throughput_items_per_second: float = 0.0
@@ -77,11 +77,11 @@ class PipelineMetrics:
         self.stage_error_counts[stage_name] += 1
         self.items_failed += 1
 
-    def set_custom_metric(self, name: str, value: any) -> None:
+    def set_custom_metric(self, name: str, value: Any) -> None:
         """Set a custom metric value."""
         self.custom_metrics[name] = value
 
-    def get_stage_metrics(self, stage_name: str) -> Dict[str, any]:
+    def get_stage_metrics(self, stage_name: str) -> Dict[str, Any]:
         """Get all metrics for a specific stage."""
         return {
             "duration": self.stage_durations.get(stage_name, 0.0),
@@ -90,7 +90,7 @@ class PipelineMetrics:
             "throughput": self._calculate_stage_throughput(stage_name)
         }
 
-    def get_summary(self) -> Dict[str, any]:
+    def get_summary(self) -> Dict[str, Any]:
         """Get a summary of all pipeline metrics."""
         summary = {
             "total_duration_seconds": self.total_duration,

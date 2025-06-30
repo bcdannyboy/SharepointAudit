@@ -6,7 +6,8 @@ import logging
 import sys
 import uuid
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Optional
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,7 +16,7 @@ from src.api.auth_manager import AuthenticationManager
 from src.api.graph_client import GraphAPIClient
 from src.api.sharepoint_client import SharePointAPIClient
 from src.core.discovery import DiscoveryModule
-from src.core.pipeline import AuditPipeline, PipelineContext
+from src.core.pipeline import AuditPipeline, PipelineContext, PipelineStage
 from src.core.processors import (
     DiscoveryStage,
     ValidationStage,
@@ -37,8 +38,132 @@ LoggingConfiguration.setup_logging()
 logger = logging.getLogger(__name__)
 
 
+class MockDiscoveryStage(PipelineStage):
+    """Mock discovery stage for dry-run mode."""
+
+    def __init__(self):
+        super().__init__("mock_discovery")
+
+    async def execute(self, context: PipelineContext) -> PipelineContext:
+        """Provide mock data instead of making API calls."""
+        self.logger.info("Running mock discovery stage (dry-run mode)")
+
+        # Add mock sites
+        mock_sites = [
+            {
+                "site_id": "mock_site_1",
+                "url": "https://test.sharepoint.com/sites/MockSite1",
+                "title": "Mock Test Site 1",
+                "created_at": datetime(2023, 1, 1, tzinfo=timezone.utc),
+                "created_by": "mock_user@test.com",
+                "storage_used": 1024 * 1024 * 100,  # 100 MB
+                "storage_quota": 1024 * 1024 * 1024,  # 1 GB
+                "web_template": "STS#3",
+                "locale_id": 1033
+            },
+            {
+                "site_id": "mock_site_2",
+                "url": "https://test.sharepoint.com/sites/MockSite2",
+                "title": "Mock Test Site 2",
+                "created_at": datetime(2023, 6, 1, tzinfo=timezone.utc),
+                "created_by": "mock_admin@test.com",
+                "storage_used": 1024 * 1024 * 500,  # 500 MB
+                "storage_quota": 1024 * 1024 * 1024 * 5,  # 5 GB
+                "web_template": "TEAMCHANNEL#0",
+                "locale_id": 1033
+            }
+        ]
+
+        # Add mock libraries
+        mock_libraries = [
+            {
+                "library_id": "mock_lib_1",
+                "site_id": "mock_site_1",
+                "name": "Documents",
+                "server_relative_url": "/sites/MockSite1/Shared Documents",
+                "created_at": datetime(2023, 1, 15, tzinfo=timezone.utc),
+                "item_count": 150,
+                "is_catalog": False,
+                "is_private_library": False
+            },
+            {
+                "library_id": "mock_lib_2",
+                "site_id": "mock_site_2",
+                "name": "Site Assets",
+                "server_relative_url": "/sites/MockSite2/SiteAssets",
+                "created_at": datetime(2023, 6, 15, tzinfo=timezone.utc),
+                "item_count": 50,
+                "is_catalog": False,
+                "is_private_library": False
+            }
+        ]
+
+        # Add mock files
+        mock_files = [
+            {
+                "file_id": "mock_file_1",
+                "library_id": "mock_lib_1",
+                "site_id": "mock_site_1",
+                "name": "ProjectPlan.docx",
+                "server_relative_url": "/sites/MockSite1/Shared Documents/ProjectPlan.docx",
+                "size_bytes": 1024 * 500,  # 500 KB
+                "created_at": datetime(2023, 2, 1, tzinfo=timezone.utc),
+                "modified_at": datetime(2023, 11, 1, tzinfo=timezone.utc),
+                "created_by": "mock_user@test.com",
+                "modified_by": "mock_user@test.com",
+                "version": "2.0"
+            },
+            {
+                "file_id": "mock_file_2",
+                "library_id": "mock_lib_1",
+                "site_id": "mock_site_1",
+                "name": "Budget2023.xlsx",
+                "server_relative_url": "/sites/MockSite1/Shared Documents/Finance/Budget2023.xlsx",
+                "size_bytes": 1024 * 1024 * 2,  # 2 MB
+                "created_at": datetime(2023, 3, 1, tzinfo=timezone.utc),
+                "modified_at": datetime(2023, 12, 15, tzinfo=timezone.utc),
+                "created_by": "mock_finance@test.com",
+                "modified_by": "mock_finance@test.com",
+                "version": "5.0"
+            }
+        ]
+
+        # Add mock folders
+        mock_folders = [
+            {
+                "folder_id": "mock_folder_1",
+                "library_id": "mock_lib_1",
+                "site_id": "mock_site_1",
+                "name": "Finance",
+                "server_relative_url": "/sites/MockSite1/Shared Documents/Finance",
+                "created_at": datetime(2023, 1, 20, tzinfo=timezone.utc),
+                "item_count": 25,
+                "is_root": False
+            }
+        ]
+
+        # Set context data
+        context.sites = mock_sites
+        context.libraries = mock_libraries
+        context.files = mock_files
+        context.folders = mock_folders
+        context.raw_data = mock_sites
+        context.total_items = len(mock_sites) + len(mock_libraries) + len(mock_files) + len(mock_folders)
+
+        # Record metrics
+        if context.metrics:
+            context.metrics.record_stage_items(self.name, len(mock_sites))
+
+        self.logger.info(f"Mock discovery complete: {len(mock_sites)} sites, "
+                        f"{len(mock_libraries)} libraries, {len(mock_files)} files, "
+                        f"{len(mock_folders)} folders")
+
+        return context
+
+
 async def create_pipeline(config_path: str = "config/config.json",
-                        run_id: Optional[str] = None) -> AuditPipeline:
+                        run_id: Optional[str] = None,
+                        dry_run: bool = False) -> AuditPipeline:
     """Create and configure the audit pipeline."""
     # Load configuration
     logger.info(f"Loading configuration from {config_path}")
@@ -101,7 +226,7 @@ async def create_pipeline(config_path: str = "config/config.json",
 
     # Create pipeline context
     if not run_id:
-        run_id = f"audit_run_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        run_id = f"audit_run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
     context = PipelineContext(
         run_id=run_id,
@@ -119,7 +244,13 @@ async def create_pipeline(config_path: str = "config/config.json",
 
     # Add stages
     logger.info("Adding pipeline stages...")
-    pipeline.add_stage(DiscoveryStage(discovery_module))
+
+    if dry_run:
+        # Use mock discovery stage for dry-run mode
+        pipeline.add_stage(MockDiscoveryStage())
+    else:
+        pipeline.add_stage(DiscoveryStage(discovery_module))
+
     pipeline.add_stage(ValidationStage())
     pipeline.add_stage(TransformationStage())
     pipeline.add_stage(EnrichmentStage())
@@ -135,7 +266,6 @@ async def create_pipeline(config_path: str = "config/config.json",
 async def main():
     """Main entry point for the pipeline runner."""
     import argparse
-    from typing import Optional
 
     parser = argparse.ArgumentParser(description="Run the SharePoint audit pipeline")
     parser.add_argument(
@@ -170,20 +300,7 @@ async def main():
 
         # Create and configure pipeline
         logger.info("Creating audit pipeline...")
-        pipeline = await create_pipeline(args.config, run_id)
-
-        if args.dry_run:
-            logger.info("Running in dry-run mode - no actual API calls will be made")
-            # In dry-run mode, we would mock the API calls
-            # For now, just add some test data
-            pipeline.context.raw_data = [
-                {
-                    "site_id": "test_site_1",
-                    "url": "https://test.sharepoint.com/sites/test1",
-                    "title": "Test Site 1",
-                    "created_at": "2023-01-01T00:00:00Z"
-                }
-            ]
+        pipeline = await create_pipeline(args.config, run_id, dry_run=args.dry_run)
 
         if args.resume:
             logger.info(f"Resuming pipeline run: {run_id}")
@@ -203,7 +320,7 @@ async def main():
         await result.db_repository.update_audit_run(
             result.run_id,
             {
-                "completed_at": datetime.utcnow().isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "status": status,
                 "total_sites_processed": len(result.sites),
                 "total_items_processed": result.total_items,

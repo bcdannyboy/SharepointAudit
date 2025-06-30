@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from ..database.repository import DatabaseRepository
@@ -32,5 +32,5 @@ class CheckpointManager:
         return None
 
     async def cleanup_old_checkpoints(self, days: int = 7) -> None:
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         await self.db.delete_checkpoints_before(cutoff)

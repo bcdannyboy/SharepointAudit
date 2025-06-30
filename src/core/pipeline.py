@@ -5,7 +5,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ..database.repository import DatabaseRepository
 from ..utils.checkpoint_manager import CheckpointManager
@@ -98,7 +98,8 @@ class AuditPipeline:
                 for i, stage in enumerate(self._stages):
                     if stage.name == last_completed_stage:
                         start_index = i + 1
-                        self.logger.info(f"Resuming from stage: {self._stages[start_index].name if start_index < len(self._stages) else 'END'}")
+                        next_stage = self._stages[start_index].name if start_index < len(self._stages) else 'END'
+                        self.logger.info(f"Resuming from stage: {next_stage}")
                         break
 
             # Execute stages

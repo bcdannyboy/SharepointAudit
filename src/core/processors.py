@@ -1,10 +1,9 @@
 """Data processing stages and transformers for the audit pipeline."""
 
-import asyncio
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -56,9 +55,11 @@ class DiscoveryStage(PipelineStage):
                 if context.metrics:
                     context.metrics.record_stage_items("discovery", context.total_items)
 
-            self.logger.info(f"Discovery completed. Found {len(context.sites)} sites, "
-                           f"{len(context.libraries)} libraries, {len(context.folders)} folders, "
-                           f"{len(context.files)} files. Total: {context.total_items} items")
+            self.logger.info(
+                f"Discovery completed. Found {len(context.sites)} sites, "
+                f"{len(context.libraries)} libraries, {len(context.folders)} folders, "
+                f"{len(context.files)} files. Total: {context.total_items} items"
+            )
 
         except Exception as e:
             self.logger.error(f"Discovery stage failed: {str(e)}")
@@ -119,8 +120,10 @@ class ValidationStage(PipelineStage):
 
         # Record metrics
         if context.metrics:
-            context.metrics.record_stage_items("validation",
-                len(context.sites) + len(context.files) + len(context.folders) + len(context.raw_data))
+            context.metrics.record_stage_items(
+                "validation",
+                len(context.sites) + len(context.files) + len(context.folders) + len(context.raw_data)
+            )
 
         if self.validation_errors:
             self.logger.warning(f"Found {len(self.validation_errors)} validation errors")
@@ -230,8 +233,10 @@ class TransformationStage(PipelineStage):
         transformed = item.copy()
 
         # Normalize date fields
-        date_fields = ["created_at", "modified_at", "createdDateTime", "lastModifiedDateTime",
-                      "granted_at", "added_at", "last_synced", "started_at", "completed_at"]
+        date_fields = [
+            "created_at", "modified_at", "createdDateTime", "lastModifiedDateTime",
+            "granted_at", "added_at", "last_synced", "started_at", "completed_at"
+        ]
         for field in date_fields:
             if field in transformed and transformed[field]:
                 transformed[field] = self._parse_date(transformed[field])
@@ -364,7 +369,7 @@ class EnrichmentStage(PipelineStage):
         """Add calculated fields to an item."""
         # Calculate age if created date exists
         if "created_at" in item and isinstance(item["created_at"], datetime):
-            age_days = (datetime.utcnow() - item["created_at"]).days
+            age_days = (datetime.now(timezone.utc) - item["created_at"]).days
             item["age_days"] = age_days
             item["age_category"] = self._categorize_age(age_days)
 
@@ -498,8 +503,10 @@ class EnrichmentStage(PipelineStage):
 
     def _is_external_user(self, principal_name: str) -> bool:
         """Check if a user is external."""
-        external_indicators = ["#ext#", "_external", "@gmail.com", "@outlook.com",
-                              "@hotmail.com", "@yahoo.com"]
+        external_indicators = [
+            "#ext#", "_external", "@gmail.com", "@outlook.com",
+            "@hotmail.com", "@yahoo.com"
+        ]
         return any(indicator in principal_name.lower() for indicator in external_indicators)
 
     def _calculate_storage_metrics(self, context: PipelineContext) -> None:
@@ -510,8 +517,10 @@ class EnrichmentStage(PipelineStage):
         if context.metrics:
             context.metrics.set_custom_metric("total_storage_bytes", total_size)
             context.metrics.set_custom_metric("total_storage_gb", total_size / (1024**3))
-            context.metrics.set_custom_metric("average_file_size_mb",
-                (total_size / file_count / (1024**2)) if file_count > 0 else 0)
+            context.metrics.set_custom_metric(
+                "average_file_size_mb",
+                (total_size / file_count / (1024**2)) if file_count > 0 else 0
+            )
             context.metrics.set_custom_metric("total_files", file_count)
 
 
@@ -740,7 +749,9 @@ class DataProcessor:
 
         return result
 
-    def _transform_permissions(self, permissions: List[Dict[str, Any]], object_id: str, object_type: str) -> List[Dict[str, Any]]:
+    def _transform_permissions(
+        self, permissions: List[Dict[str, Any]], object_id: str, object_type: str
+    ) -> List[Dict[str, Any]]:
         """Transform permission data for storage."""
         transformed = []
 
