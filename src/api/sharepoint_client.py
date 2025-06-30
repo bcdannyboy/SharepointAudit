@@ -95,3 +95,92 @@ class SharePointAPIClient:
 
         operation_id = f"batch:{url}"
         return await self.retry_strategy.execute_with_retry(operation_id, _do_batch)
+
+    async def get_site_permissions(self, site_url: str) -> list[dict[str, Any]]:
+        """Get role assignments for a SharePoint site."""
+        api_url = f"{site_url}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings"
+
+        try:
+            # Get SharePoint context for authentication
+            # TODO: Use context for authenticated requests once integrated
+            # context = await self.auth_manager.get_sharepoint_context(site_url)
+
+            # For now, using the REST API directly
+            response = await self.get_with_retry(api_url)
+            return response.get("value", [])
+        except Exception as e:
+            logger.error(f"Failed to get site permissions for {site_url}: {e}")
+            raise SharePointAPIError(f"Failed to get site permissions: {e}")
+
+    async def get_library_permissions(
+        self,
+        site_url: str,
+        library_id: str
+    ) -> list[dict[str, Any]]:
+        """Get role assignments for a document library."""
+        api_url = f"{site_url}/_api/web/lists(guid'{library_id}')/roleassignments?$expand=Member,RoleDefinitionBindings"
+
+        try:
+            response = await self.get_with_retry(api_url)
+            return response.get("value", [])
+        except Exception as e:
+            logger.error(f"Failed to get library permissions for {library_id}: {e}")
+            raise SharePointAPIError(f"Failed to get library permissions: {e}")
+
+    async def get_item_permissions(
+        self,
+        site_url: str,
+        library_id: str,
+        item_id: int
+    ) -> list[dict[str, Any]]:
+        """Get role assignments for a specific item (file or folder)."""
+        api_url = f"{site_url}/_api/web/lists(guid'{library_id}')/items({item_id})/roleassignments?$expand=Member,RoleDefinitionBindings"
+
+        try:
+            response = await self.get_with_retry(api_url)
+            return response.get("value", [])
+        except Exception as e:
+            logger.error(f"Failed to get item permissions for {item_id}: {e}")
+            raise SharePointAPIError(f"Failed to get item permissions: {e}")
+
+    async def check_unique_permissions(
+        self,
+        site_url: str,
+        library_id: str,
+        item_id: int
+    ) -> bool:
+        """Check if an item has unique permissions."""
+        api_url = f"{site_url}/_api/web/lists(guid'{library_id}')/items({item_id})/HasUniqueRoleAssignments"
+
+        try:
+            response = await self.get_with_retry(api_url)
+            return response.get("value", False)
+        except Exception as e:
+            logger.error(f"Failed to check unique permissions for {item_id}: {e}")
+            return False
+
+    async def get_sharing_links(
+        self,
+        site_url: str,
+        item_url: str
+    ) -> list[dict[str, Any]]:
+        """Get sharing links for an item."""
+        api_url = f"{site_url}/_api/SP.Sharing.DocumentSharingManager.GetSharingInformation"
+
+        payload = {
+            "request": {
+                "url": item_url,
+                "permissionsOnly": False,
+                "additionalProperties": {
+                    "includeAnonymousLinks": True,
+                    "includeSharingLinks": True
+                }
+            }
+        }
+
+        try:
+            response = await self.post_with_retry(api_url, json=payload)
+            return response.get("sharingLinks", [])
+        except Exception as e:
+            logger.error(f"Failed to get sharing links for {item_url}: {e}")
+            return []

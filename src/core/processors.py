@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -837,27 +838,116 @@ class PermissionAnalysisStage(PipelineStage):
         """Analyze permissions for all discovered items."""
         self.logger.info("Starting permission analysis stage")
 
-        # This is a placeholder - would integrate with the actual PermissionAnalyzer from Phase 5
-        if self.analyzer:
-            # Analyze permissions for files with unique permissions
-            unique_permission_items = [
-                item for item in context.processed_data
-                if item.get("has_unique_permissions", False)
-            ]
-
-            self.logger.info(f"Found {len(unique_permission_items)} items with unique permissions")
-
-            # Process each item
-            for item in unique_permission_items:
-                try:
-                    permissions = await self.analyzer.analyze_item_permissions(item)
-                    if permissions:
-                        context.permissions.extend(permissions)
-                except Exception as e:
-                    self.logger.error(f"Failed to analyze permissions for item {item.get('id')}: {str(e)}")
-                    if context.metrics:
-                        context.metrics.record_stage_error("permission_analysis")
-        else:
+        if not self.analyzer:
             self.logger.warning("No permission analyzer configured, skipping permission analysis")
+            return context
+
+        start_time = time.time()
+        total_analyzed = 0
+        unique_permission_count = 0
+        external_sharing_count = 0
+
+        try:
+            # Analyze permissions for all items, prioritizing those with unique permissions
+            all_items = []
+
+            # Add sites
+            for site in context.sites:
+                all_items.append((site, "site"))
+
+            # Add libraries
+            for library in context.libraries:
+                all_items.append((library, "library"))
+
+            # Add folders
+            for folder in context.folders:
+                all_items.append((folder, "folder"))
+
+            # Add files
+            for file in context.files:
+                all_items.append((file, "file"))
+
+            self.logger.info(f"Analyzing permissions for {len(all_items)} items")
+
+            # Process in batches for better performance
+            batch_size = 50
+            for i in range(0, len(all_items), batch_size):
+                batch = all_items[i:i + batch_size]
+                # Analyze permissions for the batch
+                for item, item_type in batch:
+                    try:
+                        # Analyze permissions
+                        permission_set = await self.analyzer.analyze_item_permissions(
+                            item,
+                            item_type
+                        )
+
+                        total_analyzed += 1
+
+                        # Track statistics
+                        if permission_set.has_unique_permissions:
+                            unique_permission_count += 1
+
+                        if permission_set.external_users_count > 0 or permission_set.anonymous_links_count > 0:
+                            external_sharing_count += 1
+
+                        # Convert permission set to dictionary format for storage
+                        for perm in permission_set.permissions:
+                            permission_record = {
+                                "object_type": permission_set.object_type,
+                                "object_id": permission_set.object_id,
+                                "principal_type": perm.principal_type.value,
+                                "principal_id": perm.principal_id,
+                                "principal_name": perm.principal_name,
+                                "permission_level": perm.permission_level,
+                                "is_inherited": perm.is_inherited,
+                                "granted_at": perm.granted_at.isoformat() if perm.granted_at else None,
+                                "granted_by": perm.granted_by,
+                                "is_external": perm.is_external,
+                                "is_anonymous_link": perm.is_anonymous_link
+                            }
+                            context.permissions.append(permission_record)
+
+                        # Record metrics
+                        if context.metrics:
+                            context.metrics.increment_items_processed()
+
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to analyze permissions for {item_type} {item.get('id', 'unknown')}: {str(e)}"
+                        )
+                        context.errors.append(f"Permission analysis failed for {item_type}: {str(e)}")
+                        if context.metrics:
+                            context.metrics.record_stage_error("permission_analysis")
+
+                # Log progress
+                if (i + batch_size) % 500 == 0:
+                    self.logger.info(f"Analyzed {i + batch_size}/{len(all_items)} items")
+
+            # Generate summary report
+            if hasattr(self.analyzer, 'generate_permission_report'):
+                # Get all permission sets for report
+                report = await self.analyzer.generate_permission_report([])
+                self.logger.info(f"Permission Analysis Summary: {report}")
+
+            elapsed_time = time.time() - start_time
+            self.logger.info(
+                f"Permission analysis completed: "
+                f"{total_analyzed} items analyzed, "
+                f"{unique_permission_count} with unique permissions, "
+                f"{external_sharing_count} with external sharing, "
+                f"in {elapsed_time:.2f} seconds"
+            )
+
+            # Record final metrics
+            if context.metrics:
+                context.metrics.record_stage_completion("permission_analysis", elapsed_time)
+
+        except Exception as e:
+            self.logger.error(f"Permission analysis stage failed: {str(e)}")
+            context.errors.append(f"Permission analysis stage error: {str(e)}")
+            if context.metrics:
+                context.metrics.record_stage_error("permission_analysis")
+            raise
 
         return context

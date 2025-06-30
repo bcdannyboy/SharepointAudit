@@ -15,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.api.auth_manager import AuthenticationManager
 from src.api.graph_client import GraphAPIClient
 from src.api.sharepoint_client import SharePointAPIClient
+from src.cache.cache_manager import CacheManager
 from src.core.discovery import DiscoveryModule
+from src.core.permissions import PermissionAnalyzer
 from src.core.pipeline import AuditPipeline, PipelineContext, PipelineStage
 from src.core.processors import (
     DiscoveryStage,
@@ -163,7 +165,8 @@ class MockDiscoveryStage(PipelineStage):
 
 async def create_pipeline(config_path: str = "config/config.json",
                         run_id: Optional[str] = None,
-                        dry_run: bool = False) -> AuditPipeline:
+                        dry_run: bool = False,
+                        analyze_permissions: bool = False) -> AuditPipeline:
     """Create and configure the audit pipeline."""
     # Load configuration
     logger.info(f"Loading configuration from {config_path}")
@@ -256,9 +259,22 @@ async def create_pipeline(config_path: str = "config/config.json",
     pipeline.add_stage(EnrichmentStage())
     pipeline.add_stage(StorageStage(db_repo))
 
-    # Add permission analysis stage if available (Phase 5)
-    # Note: This is a placeholder for Phase 5
-    # pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
+    # Add permission analysis stage if requested
+    if analyze_permissions:
+        logger.info("Adding permission analysis stage...")
+
+        # Create cache manager
+        cache_manager = CacheManager(db_repo)
+
+        # Create permission analyzer
+        permission_analyzer = PermissionAnalyzer(
+            graph_client=graph_client,
+            sp_client=sp_client,
+            db_repo=db_repo,
+            cache_manager=cache_manager
+        )
+
+        pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
 
     return pipeline
 
@@ -300,7 +316,12 @@ async def main():
 
         # Create and configure pipeline
         logger.info("Creating audit pipeline...")
-        pipeline = await create_pipeline(args.config, run_id, dry_run=args.dry_run)
+        pipeline = await create_pipeline(
+            args.config,
+            run_id,
+            dry_run=args.dry_run,
+            analyze_permissions=args.analyze_permissions
+        )
 
         if args.resume:
             logger.info(f"Resuming pipeline run: {run_id}")

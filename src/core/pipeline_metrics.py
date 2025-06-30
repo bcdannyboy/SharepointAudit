@@ -161,3 +161,12 @@ class PipelineMetrics:
         if duration > 0 and items > 0:
             return items / duration
         return 0.0
+
+    def increment_items_processed(self) -> None:
+        """Increment the count of processed items."""
+        self.items_processed += 1
+
+    def record_stage_completion(self, stage_name: str, duration: float) -> None:
+        """Record the completion of a stage with its duration."""
+        self.stage_durations[stage_name] = duration
+        logger.debug(f"Stage '{stage_name}' completed in {duration:.2f}s")

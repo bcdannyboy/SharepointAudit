@@ -7,7 +7,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, List, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .models import SCHEMA_STATEMENTS, INDEX_STATEMENTS, VIEW_STATEMENTS
 from .optimizer import DatabaseOptimizer
@@ -267,3 +267,38 @@ class DatabaseRepository:
                 return result[0] == "ok" if result else False
 
         return await asyncio.to_thread(_check)
+
+    async def get_cache_entry(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get a cache entry by key."""
+        query = "SELECT cache_key as key, cache_value as value, expires_at, created_at FROM cache_entries WHERE cache_key = ?"
+        return await self.fetch_one(query, (key,))
+
+    async def set_cache_entry(self, key: str, value: str, expires_at: Optional[datetime] = None) -> None:
+        """Set or update a cache entry."""
+        query = """
+        INSERT INTO cache_entries (cache_key, cache_value, expires_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(cache_key) DO UPDATE SET
+            cache_value = excluded.cache_value,
+            expires_at = excluded.expires_at
+        """
+        expires_at_str = expires_at.isoformat() if expires_at else datetime.now(timezone.utc).isoformat()
+        await self.execute(query, (key, value, expires_at_str))
+
+    async def delete_cache_entry(self, key: str) -> bool:
+        """Delete a cache entry."""
+        query = "DELETE FROM cache_entries WHERE cache_key = ?"
+        async with self.transaction() as conn:
+            cursor = conn.execute(query, (key,))
+            return cursor.rowcount > 0
+
+    async def clear_cache(self) -> None:
+        """Clear all cache entries."""
+        await self.execute("DELETE FROM cache_entries")
+
+    async def cleanup_expired_cache_entries(self) -> int:
+        """Delete expired cache entries and return count of deleted entries."""
+        query = "DELETE FROM cache_entries WHERE expires_at IS NOT NULL AND expires_at < ?"
+        async with self.transaction() as conn:
+            cursor = conn.execute(query, (datetime.now(timezone.utc).isoformat(),))
+            return cursor.rowcount

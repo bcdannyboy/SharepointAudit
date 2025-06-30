@@ -20,6 +20,15 @@ def test_graph_auth_success(auth_manager):
 
 def test_graph_get_with_retry(graph_client):
     async def run():
+        # Mock the auth manager to return a valid token
+        mock_credential = AsyncMock()
+        mock_credential.get_token = AsyncMock(return_value=AsyncMock(token="test_token"))
+
+        mock_graph_service_client = AsyncMock()
+        mock_graph_service_client.credentials = mock_credential
+
+        graph_client.auth_manager.get_graph_client = AsyncMock(return_value=mock_graph_service_client)
+
         with patch("aiohttp.ClientSession.get") as mock_get:
             mock_get.side_effect = [
                 AsyncMock(status=429, headers={"Retry-After": "0"}),
@@ -34,6 +43,15 @@ def test_graph_get_with_retry(graph_client):
 
 def test_graph_post_with_retry(graph_client):
     async def run():
+        # Mock the auth manager to return a valid token
+        mock_credential = AsyncMock()
+        mock_credential.get_token = AsyncMock(return_value=AsyncMock(token="test_token"))
+
+        mock_graph_service_client = AsyncMock()
+        mock_graph_service_client.credentials = mock_credential
+
+        graph_client.auth_manager.get_graph_client = AsyncMock(return_value=mock_graph_service_client)
+
         with patch("aiohttp.ClientSession.post") as mock_post:
             mock_post.side_effect = [
                 AsyncMock(status=429, headers={"Retry-After": "0"}),
@@ -50,6 +68,15 @@ def test_graph_post_with_retry(graph_client):
 
 def test_graph_batch_request(graph_client):
     async def run():
+        # Mock the auth manager to return a valid token
+        mock_credential = AsyncMock()
+        mock_credential.get_token = AsyncMock(return_value=AsyncMock(token="test_token"))
+
+        mock_graph_service_client = AsyncMock()
+        mock_graph_service_client.credentials = mock_credential
+
+        graph_client.auth_manager.get_graph_client = AsyncMock(return_value=mock_graph_service_client)
+
         with patch("aiohttp.ClientSession.post") as mock_post:
             mock_post.return_value = AsyncMock(
                 status=200, json=AsyncMock(return_value={"responses": [1, 2]})
