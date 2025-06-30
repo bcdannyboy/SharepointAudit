@@ -11,6 +11,7 @@ from src.api.graph_client import GraphAPIClient
 from src.api.sharepoint_client import SharePointAPIClient
 from src.database.repository import DatabaseRepository
 from src.cache.cache_manager import CacheManager
+from .concurrency import ConcurrencyManager
 from src.utils.exceptions import SharePointAPIError
 
 logger = logging.getLogger(__name__)
@@ -94,13 +95,20 @@ class PermissionAnalyzer:
         graph_client: GraphAPIClient,
         sp_client: SharePointAPIClient,
         db_repo: DatabaseRepository,
-        cache_manager: CacheManager
+        cache_manager: CacheManager,
+        concurrency_manager: "ConcurrencyManager | None" = None,
     ):
         self.graph_client = graph_client
         self.sp_client = sp_client
         self.db_repo = db_repo
         self.cache = cache_manager
+        self.concurrency_manager = concurrency_manager
         self._permission_cache: Dict[str, PermissionSet] = {}
+
+    async def _run_api_task(self, coro):
+        if self.concurrency_manager:
+            return await self.concurrency_manager.run_api_task(coro)
+        return await coro
 
     async def analyze_item_permissions(
         self,
@@ -225,19 +233,25 @@ class PermissionAnalyzer:
         try:
             # Get role assignments from SharePoint
             if item_type == "site":
-                role_assignments = await self.sp_client.get_site_permissions(
-                    item.get("site_url")
+                role_assignments = await self._run_api_task(
+                    self.sp_client.get_site_permissions(
+                        item.get("site_url")
+                    )
                 )
             elif item_type == "library":
-                role_assignments = await self.sp_client.get_library_permissions(
-                    item.get("site_url"),
-                    item.get("library_id")
+                role_assignments = await self._run_api_task(
+                    self.sp_client.get_library_permissions(
+                        item.get("site_url"),
+                        item.get("library_id")
+                    )
                 )
             elif item_type in ["folder", "file"]:
-                role_assignments = await self.sp_client.get_item_permissions(
-                    item.get("site_url"),
-                    item.get("library_id"),
-                    item.get("id")
+                role_assignments = await self._run_api_task(
+                    self.sp_client.get_item_permissions(
+                        item.get("site_url"),
+                        item.get("library_id"),
+                        item.get("id")
+                    )
                 )
             else:
                 logger.warning(f"Unknown item type: {item_type}")
@@ -404,7 +418,9 @@ class PermissionAnalyzer:
         # Check via Graph API if it looks like an email
         if "@" in principal_name:
             try:
-                return await self.graph_client.check_external_user(principal_name)
+                return await self._run_api_task(
+                    self.graph_client.check_external_user(principal_name)
+                )
             except Exception as e:
                 logger.debug(f"Could not check external status for {principal_name}: {e}")
 
@@ -447,7 +463,9 @@ class PermissionAnalyzer:
 
         try:
             # Use Graph API's transitiveMembers endpoint
-            members = await self.graph_client.expand_group_members_transitive(group_id)
+            members = await self._run_api_task(
+                self.graph_client.expand_group_members_transitive(group_id)
+            )
 
             # Separate users and nested groups
             users = []
@@ -461,7 +479,9 @@ class PermissionAnalyzer:
                     nested_groups.append(member.get("id"))
 
             # Get group info
-            group_info = await self.graph_client.get_group_info(group_id)
+            group_info = await self._run_api_task(
+                self.graph_client.get_group_info(group_id)
+            )
 
             membership = GroupMembership(
                 group_id=group_id,
