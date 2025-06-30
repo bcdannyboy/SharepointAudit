@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from ..api.graph_client import GraphAPIClient
 from ..api.sharepoint_client import SharePointAPIClient
 from ..database.repository import DatabaseRepository
+from ..cache.cache_manager import CacheManager
+from .concurrency import ConcurrencyManager
 from .progress_tracker import ProgressTracker
 from ..utils.checkpoint_manager import CheckpointManager
 
@@ -23,6 +25,8 @@ class DiscoveryModule:
         sp_client: SharePointAPIClient,
         db_repo: DatabaseRepository,
         checkpoint_manager: CheckpointManager,
+        cache_manager: "CacheManager | None" = None,
+        concurrency_manager: "ConcurrencyManager | None" = None,
         max_concurrent_sites: int = 20,
         max_concurrent_operations: int = 50,
     ) -> None:
@@ -30,9 +34,16 @@ class DiscoveryModule:
         self.sp_client = sp_client
         self.db_repo = db_repo
         self.checkpoints = checkpoint_manager
+        self.cache = cache_manager
+        self.concurrency_manager = concurrency_manager
         self.progress_tracker = ProgressTracker()
         self.site_semaphore = asyncio.Semaphore(max_concurrent_sites)
         self.operation_semaphore = asyncio.Semaphore(max_concurrent_operations)
+
+    async def _run_api_task(self, coro):
+        if self.concurrency_manager:
+            return await self.concurrency_manager.run_api_task(coro)
+        return await coro
 
     async def run_discovery(self, run_id: str) -> None:
         """Orchestrates the full discovery process."""
@@ -42,7 +53,9 @@ class DiscoveryModule:
         sites_delta_token = await self.checkpoints.restore_checkpoint(run_id, "sites_delta_token")
 
         # Discover all sites using delta query
-        result = await self.graph_client.get_all_sites_delta(sites_delta_token)
+        result = await self._run_api_task(
+            self.graph_client.get_all_sites_delta(sites_delta_token)
+        )
 
         # Save sites to database
         if hasattr(result, 'items') and result.items:
@@ -130,8 +143,16 @@ class DiscoveryModule:
                 return []
 
             try:
+                cache_key = f"site_libraries:{site_id}"
+                if self.cache:
+                    cached = await self.cache.get(cache_key)
+                    if cached is not None:
+                        return cached
+
                 url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
-                data = await self.graph_client.get_with_retry(url)
+                data = await self._run_api_task(
+                    self.graph_client.get_with_retry(url)
+                )
                 libraries = data.get("value", [])
 
                 # Save libraries to database
@@ -151,6 +172,9 @@ class DiscoveryModule:
                         await self.db_repo.bulk_insert("libraries", records)
                         logger.debug(f"Saved {len(records)} libraries for site {site_id}")
 
+                if self.cache:
+                    await self.cache.set(cache_key, libraries, ttl=3600)
+
                 return libraries
 
             except Exception as e:
@@ -165,12 +189,23 @@ class DiscoveryModule:
                 return []
 
             try:
+                cache_key = f"site_lists:{site_id}"
+                if self.cache:
+                    cached = await self.cache.get(cache_key)
+                    if cached is not None:
+                        return cached
+
                 url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists"
-                data = await self.graph_client.get_with_retry(url)
+                data = await self._run_api_task(
+                    self.graph_client.get_with_retry(url)
+                )
                 lists = data.get("value", [])
 
                 # Note: Lists are not document libraries, so we might want to store them separately
                 # For now, we'll just return them
+
+                if self.cache:
+                    await self.cache.set(cache_key, lists, ttl=3600)
 
                 return lists
 
@@ -186,9 +221,24 @@ class DiscoveryModule:
                 return []
 
             try:
-                url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/sites"
-                data = await self.graph_client.get_with_retry(url)
-                subsites = data.get("value", [])
+                cache_key = f"subsites:{site_id}"
+                if self.cache:
+                    cached = await self.cache.get(cache_key)
+                    if cached is not None:
+                        subsites = cached
+                    else:
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/sites"
+                        data = await self._run_api_task(
+                            self.graph_client.get_with_retry(url)
+                        )
+                        subsites = data.get("value", [])
+                        await self.cache.set(cache_key, subsites, ttl=3600)
+                else:
+                    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/sites"
+                    data = await self._run_api_task(
+                        self.graph_client.get_with_retry(url)
+                    )
+                    subsites = data.get("value", [])
 
                 # Recursively discover content for each subsite
                 if subsites:
@@ -257,7 +307,9 @@ class DiscoveryModule:
                 all_files = []
 
                 while url:
-                    data = await self.graph_client.get_with_retry(url)
+                    data = await self._run_api_task(
+                        self.graph_client.get_with_retry(url)
+                    )
                     items = data.get("value", [])
 
                     # Separate folders and files

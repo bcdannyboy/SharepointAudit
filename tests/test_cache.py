@@ -301,6 +301,7 @@ class TestCacheManager:
 
         assert "memory_cache" in stats
         assert "cache_prefix" in stats
+        assert "cache_stats" in stats
         assert stats["cache_prefix"] == "sp_audit"
 
 
