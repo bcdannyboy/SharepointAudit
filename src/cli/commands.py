@@ -328,11 +328,8 @@ def dashboard(ctx, db_path, port, no_browser):
     # Check if streamlit app exists
     streamlit_app_path = Path(__file__).parent.parent / "dashboard" / "streamlit_app.py"
     if not streamlit_app_path.exists():
-        output.warning("Dashboard not yet implemented (Phase 8)")
-        output.info("Creating placeholder dashboard...")
-        # Create a minimal placeholder
-        streamlit_app_path.parent.mkdir(parents=True, exist_ok=True)
-        streamlit_app_path.write_text(_get_placeholder_dashboard())
+        output.error(f"Dashboard app not found: {streamlit_app_path}")
+        ctx.exit(1)
 
     # Build streamlit command
     command = [
@@ -530,54 +527,3 @@ def health(ctx, config, check_auth, check_api, check_db):
         ctx.exit(1)
 
 
-def _get_placeholder_dashboard():
-    """Get placeholder dashboard code."""
-    return '''"""Placeholder dashboard for SharePoint Audit (Phase 8 - To be implemented)."""
-
-import streamlit as st
-import sys
-from pathlib import Path
-
-st.set_page_config(
-    page_title="SharePoint Audit Dashboard",
-    page_icon="📊",
-    layout="wide"
-)
-
-st.title("SharePoint Audit Dashboard")
-st.info("This dashboard will be implemented in Phase 8 of the development plan.")
-
-# Parse command line arguments
-db_path = None
-if "--db-path" in sys.argv:
-    idx = sys.argv.index("--db-path")
-    if idx + 1 < len(sys.argv):
-        db_path = sys.argv[idx + 1]
-
-if db_path and Path(db_path).exists():
-    st.success(f"Database found: {db_path}")
-
-    st.subheader("Planned Features")
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        **Analytics & Visualizations**
-        - Site storage usage charts
-        - File type distribution
-        - Permission complexity metrics
-        - User access patterns
-        """)
-
-    with col2:
-        st.markdown("""
-        **Data Exploration**
-        - Browse sites and libraries
-        - Search files and folders
-        - View permission reports
-        - Export audit data
-        """)
-else:
-    st.error("No database path provided or database not found.")
-    st.info("Usage: streamlit run streamlit_app.py -- --db-path /path/to/audit.db")
-'''
