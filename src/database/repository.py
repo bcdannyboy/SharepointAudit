@@ -67,6 +67,38 @@ class DatabaseRepository:
                 total += len(batch)
         return total
 
+    async def bulk_upsert(
+        self, table_name: str, records: Iterable[Mapping[str, Any]],
+        unique_columns: List[str], batch_size: int = 1000
+    ) -> int:
+        """Insert or update records based on unique columns."""
+        records = list(records)
+        if not records:
+            return 0
+
+        columns = list(records[0].keys())
+        placeholders = ",".join(["?" for _ in columns])
+
+        # Build the update clause for ON CONFLICT
+        update_columns = [c for c in columns if c not in unique_columns]
+        update_clause = ", ".join([f"{c} = excluded.{c}" for c in update_columns])
+
+        query = f"""
+            INSERT INTO {table_name} ({','.join(columns)})
+            VALUES ({placeholders})
+            ON CONFLICT ({','.join(unique_columns)})
+            DO UPDATE SET {update_clause}
+        """
+
+        total = 0
+        async with self.transaction() as conn:
+            for i in range(0, len(records), batch_size):
+                batch = records[i : i + batch_size]
+                values = [tuple(r.get(c) for c in columns) for r in batch]
+                conn.executemany(query, values)
+                total += len(batch)
+        return total
+
     async def save_site(self, site_data: Mapping[str, Any], conn: Optional[sqlite3.Connection] = None) -> None:
         columns = list(site_data.keys())
         placeholders = ",".join(["?" for _ in columns])

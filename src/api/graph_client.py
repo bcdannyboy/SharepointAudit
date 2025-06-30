@@ -38,9 +38,11 @@ class GraphAPIClient:
 
         # Get a new token
         try:
-            # Get the Graph client which has the credential
-            graph_client = await self.auth_manager.get_graph_client()
-            credential = graph_client.credentials
+            # Get the credential directly from auth manager
+            credential = await self.auth_manager.get_credential()
+
+            logger.info(f"Credential type: {type(credential).__name__} from module: {type(credential).__module__}")
+            logger.info(f"Credential has get_token: {hasattr(credential, 'get_token')}")
 
             # Get token for Graph API
             # Handle both sync and async credential methods

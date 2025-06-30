@@ -50,6 +50,10 @@ def load_and_merge_config(config_path: str = "config/config.json",
         }
     }
 
+    # Add certificate thumbprint if present
+    if app_config.auth.certificate_thumbprint:
+        config_dict["auth"]["certificate_thumbprint"] = app_config.auth.certificate_thumbprint
+
     # Add certificate password if present
     if app_config.auth.certificate_password:
         config_dict["auth"]["certificate_password"] = app_config.auth.certificate_password

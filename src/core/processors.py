@@ -370,7 +370,13 @@ class EnrichmentStage(PipelineStage):
         """Add calculated fields to an item."""
         # Calculate age if created date exists
         if "created_at" in item and isinstance(item["created_at"], datetime):
-            age_days = (datetime.now(timezone.utc) - item["created_at"]).days
+            # Ensure both datetimes are timezone-aware for comparison
+            created_at = item["created_at"]
+            if created_at.tzinfo is None:
+                # If created_at is naive, assume it's UTC
+                created_at = created_at.replace(tzinfo=timezone.utc)
+
+            age_days = (datetime.now(timezone.utc) - created_at).days
             item["age_days"] = age_days
             item["age_category"] = self._categorize_age(age_days)
 

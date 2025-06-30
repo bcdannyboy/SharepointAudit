@@ -58,27 +58,34 @@ class DiscoveryModule:
         )
 
         # Save sites to database
-        if hasattr(result, 'items') and result.items:
+        if isinstance(result, dict) and 'value' in result:
             site_records = []
-            for site in result.items:
+            for site in result['value']:
                 site_data = self._site_to_dict(site)
                 if site_data:
                     site_records.append(site_data)
 
             if site_records:
-                await self.db_repo.bulk_insert('sites', site_records)
-                logger.info(f"Saved {len(site_records)} sites to database")
+                await self.db_repo.bulk_upsert('sites', site_records, unique_columns=['site_id'])
+                logger.info(f"Saved/updated {len(site_records)} sites in database")
 
         # Save new delta token
-        if hasattr(result, 'delta_token') and result.delta_token:
-            await self.checkpoints.save_checkpoint(run_id, "sites_delta_token", result.delta_token)
+        if isinstance(result, dict) and '@odata.deltaLink' in result:
+            # Extract the delta token from the deltaLink URL
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(result['@odata.deltaLink'])
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            if 'token' in query_params:
+                delta_token = query_params['token'][0]
+                await self.checkpoints.save_checkpoint(run_id, "sites_delta_token", delta_token)
 
-        self.progress_tracker.finish("Site Discovery", f"Found {len(result.items) if hasattr(result, 'items') else 0} sites")
+        sites_count = len(result.get('value', [])) if isinstance(result, dict) else 0
+        self.progress_tracker.finish("Site Discovery", f"Found {sites_count} sites")
 
         # Discover content for each site in parallel with semaphore control
-        if hasattr(result, 'items') and result.items:
+        if isinstance(result, dict) and 'value' in result:
             tasks = []
-            for site in result.items:
+            for site in result['value']:
                 task = self._discover_site_with_semaphore(run_id, site)
                 tasks.append(task)
 
@@ -90,12 +97,18 @@ class DiscoveryModule:
             try:
                 await self.discover_site_content(run_id, site)
             except Exception as e:
-                logger.error(f"Error discovering site {getattr(site, 'id', 'unknown')}: {e}")
+                site_id = site.get('id', 'unknown') if isinstance(site, dict) else getattr(site, 'id', 'unknown')
+                logger.error(f"Error discovering site {site_id}: {e}")
 
     async def discover_site_content(self, run_id: str, site: Any) -> None:
         """Discovers all content for a single site."""
-        site_id = getattr(site, 'id', '')
-        site_title = getattr(site, 'title', getattr(site, 'displayName', 'Unknown'))
+        # Handle both dict and object access
+        if isinstance(site, dict):
+            site_id = site.get('id', '')
+            site_title = site.get('displayName', site.get('name', 'Unknown'))
+        else:
+            site_id = getattr(site, 'id', '')
+            site_title = getattr(site, 'displayName', getattr(site, 'name', 'Unknown'))
 
         # Check if this site was already processed
         checkpoint_key = f"site_{site_id}_status"
@@ -138,7 +151,11 @@ class DiscoveryModule:
     async def _discover_libraries(self, site: Any) -> List[Dict[str, Any]]:
         """Enumerate document libraries for the given site."""
         async with self.operation_semaphore:
-            site_id = getattr(site, 'id', None)
+            # Handle both dict and object access
+            if isinstance(site, dict):
+                site_id = site.get('id')
+            else:
+                site_id = getattr(site, 'id', None)
             if not site_id:
                 return []
 
@@ -184,7 +201,11 @@ class DiscoveryModule:
     async def _discover_lists(self, site: Any) -> List[Dict[str, Any]]:
         """Enumerate lists for the given site."""
         async with self.operation_semaphore:
-            site_id = getattr(site, 'id', None)
+            # Handle both dict and object access
+            if isinstance(site, dict):
+                site_id = site.get('id')
+            else:
+                site_id = getattr(site, 'id', None)
             if not site_id:
                 return []
 
@@ -216,7 +237,11 @@ class DiscoveryModule:
     async def _discover_subsites(self, run_id: str, site: Any) -> List[Dict[str, Any]]:
         """Discover subsites and recursively process their contents."""
         async with self.operation_semaphore:
-            site_id = getattr(site, 'id', None)
+            # Handle both dict and object access
+            if isinstance(site, dict):
+                site_id = site.get('id')
+            else:
+                site_id = getattr(site, 'id', None)
             if not site_id:
                 return []
 
@@ -286,7 +311,11 @@ class DiscoveryModule:
     ) -> None:
         """Recursively discover folders and files within a folder."""
         async with self.operation_semaphore:
-            site_id = getattr(site, 'id', None)
+            # Handle both dict and object access
+            if isinstance(site, dict):
+                site_id = site.get('id')
+            else:
+                site_id = getattr(site, 'id', None)
             library_id = library.get("id")
 
             if not site_id or not library_id:

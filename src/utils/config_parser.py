@@ -8,6 +8,7 @@ class AuthConfig:
     tenant_id: str
     client_id: str
     certificate_path: str
+    certificate_thumbprint: Optional[str] = None
     certificate_password: Optional[str] = None
 
 

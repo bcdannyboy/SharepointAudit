@@ -38,6 +38,7 @@ from ..utils.rate_limiter import RateLimiter
 from ..utils.retry_handler import RetryStrategy, RetryConfig
 from .config_parser import load_and_merge_config
 from .output import RichOutput, setup_logging
+from ..utils.config_parser import AuthConfig
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -126,7 +127,14 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
     await db_repo.initialize_database()
 
     # Create authentication manager
-    auth_config = config['auth']
+    auth_dict = config['auth']
+    auth_config = AuthConfig(
+        tenant_id=auth_dict['tenant_id'],
+        client_id=auth_dict['client_id'],
+        certificate_path=auth_dict['certificate_path'],
+        certificate_thumbprint=auth_dict.get('certificate_thumbprint'),
+        certificate_password=auth_dict.get('certificate_password')
+    )
     auth_manager = AuthenticationManager(auth_config)
 
     # Create API clients
@@ -525,5 +533,3 @@ def health(ctx, config, check_auth, check_api, check_db):
     else:
         output.error("\nSome health checks failed. Please check the errors above.")
         ctx.exit(1)
-
-
