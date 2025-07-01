@@ -35,8 +35,8 @@ def load_export_data(db_path: str, export_type: str) -> pd.DataFrame:
                 COUNT(DISTINCT l.id) as library_count,
                 COUNT(DISTINCT f.id) as file_count
             FROM sites s
-            LEFT JOIN libraries l ON s.id = l.site_id
-            LEFT JOIN files f ON l.id = f.library_id
+            LEFT JOIN libraries l ON s.site_id = l.site_id
+            LEFT JOIN files f ON l.library_id = f.library_id
             GROUP BY s.id
             """
 
@@ -53,7 +53,7 @@ def load_export_data(db_path: str, export_type: str) -> pd.DataFrame:
                 s.title as site_title,
                 s.url as site_url
             FROM libraries l
-            JOIN sites s ON l.site_id = s.id
+            JOIN sites s ON l.site_id = s.site_id
             """
 
         elif export_type == "Files":
@@ -75,8 +75,8 @@ def load_export_data(db_path: str, export_type: str) -> pd.DataFrame:
                 l.name as library_name,
                 s.title as site_title
             FROM files f
-            JOIN libraries l ON f.library_id = l.id
-            JOIN sites s ON l.site_id = s.id
+            JOIN libraries l ON f.library_id = l.library_id
+            JOIN sites s ON l.site_id = s.site_id
             """
 
         elif export_type == "Permissions":
@@ -98,7 +98,7 @@ def load_export_data(db_path: str, export_type: str) -> pd.DataFrame:
                 END as object_name,
                 CASE
                     WHEN p.object_type = 'site' THEN s.url
-                    WHEN p.object_type = 'library' THEN (SELECT url FROM sites WHERE id = l.site_id)
+                    WHEN p.object_type = 'library' THEN (SELECT url FROM sites WHERE site_id = l.site_id)
                     WHEN p.object_type = 'folder' THEN fo.server_relative_url
                     WHEN p.object_type = 'file' THEN fi.server_relative_url
                 END as object_path
@@ -124,8 +124,8 @@ def load_export_data(db_path: str, export_type: str) -> pd.DataFrame:
                 END as object_name,
                 CASE
                     WHEN p.object_type IN ('library', 'folder', 'file') THEN
-                        (SELECT title FROM sites WHERE id = COALESCE(l.site_id,
-                            (SELECT site_id FROM libraries WHERE id = COALESCE(fo.library_id, fi.library_id))))
+                        (SELECT title FROM sites WHERE site_id = COALESCE(l.site_id,
+                            (SELECT site_id FROM libraries WHERE library_id = COALESCE(fo.library_id, fi.library_id))))
                     WHEN p.object_type = 'site' THEN s.title
                 END as site_title
             FROM permissions p

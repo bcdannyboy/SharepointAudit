@@ -31,14 +31,15 @@ def load_sites_data(db_path: str) -> pd.DataFrame:
             s.storage_used,
             s.storage_quota,
             s.is_hub_site,
-            COUNT(DISTINCT l.id) as library_count,
-            COUNT(DISTINCT f.id) as file_count,
+            COUNT(DISTINCT l.library_id) as library_count,
+            COUNT(DISTINCT f.file_id) as file_count,
             COALESCE(SUM(f.size_bytes), 0) as total_file_size
         FROM sites s
-        LEFT JOIN libraries l ON s.id = l.site_id
-        LEFT JOIN files f ON l.id = f.library_id
-        GROUP BY s.id
-        ORDER BY s.storage_used DESC
+        LEFT JOIN libraries l ON s.site_id = l.site_id
+        LEFT JOIN files f ON l.library_id = f.library_id
+        GROUP BY s.site_id, s.title, s.url, s.created_at, s.last_modified,
+                 s.storage_used, s.storage_quota, s.is_hub_site
+        ORDER BY COALESCE(s.storage_used, 0) DESC
         """
         return await repo.fetch_all(query)
 

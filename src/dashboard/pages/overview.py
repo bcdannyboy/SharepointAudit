@@ -90,17 +90,20 @@ def load_storage_by_site_type(db_path: str) -> pd.DataFrame:
 
     async def _load():
         repo = DatabaseRepository(db_path)
+        # Since storage_used might be empty, calculate from files instead
         query = """
         SELECT
             CASE
-                WHEN is_hub_site THEN 'Hub Site'
+                WHEN s.is_hub_site THEN 'Hub Site'
                 ELSE 'Regular Site'
             END as site_type,
-            COUNT(*) as count,
-            SUM(storage_used) as total_storage,
-            AVG(storage_used) as avg_storage
-        FROM sites
-        GROUP BY is_hub_site
+            COUNT(DISTINCT s.site_id) as count,
+            COALESCE(SUM(f.size_bytes), 0) as total_storage,
+            COALESCE(AVG(f.size_bytes), 0) as avg_storage
+        FROM sites s
+        LEFT JOIN libraries l ON s.site_id = l.site_id
+        LEFT JOIN files f ON l.library_id = f.library_id
+        GROUP BY s.is_hub_site
         """
         return await repo.fetch_all(query)
 
@@ -122,8 +125,8 @@ def load_recent_activity(db_path: str) -> pd.DataFrame:
             f.size_bytes,
             s.title as site_title
         FROM files f
-        JOIN libraries l ON f.library_id = l.id
-        JOIN sites s ON l.site_id = s.id
+        JOIN libraries l ON f.library_id = l.library_id
+        JOIN sites s ON l.site_id = s.site_id
         WHERE f.modified_at IS NOT NULL
         ORDER BY f.modified_at DESC
         LIMIT 10

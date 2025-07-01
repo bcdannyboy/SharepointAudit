@@ -41,8 +41,8 @@ def load_files_data(db_path: str, filters: dict) -> pd.DataFrame:
             s.title as site_title,
             s.url as site_url
         FROM files f
-        JOIN libraries l ON f.library_id = l.id
-        JOIN sites s ON l.site_id = s.id
+        JOIN libraries l ON f.library_id = l.library_id
+        JOIN sites s ON l.site_id = s.site_id
         WHERE 1=1
         """
 
@@ -175,8 +175,8 @@ def load_large_files(db_path: str, top_n: int = 20) -> pd.DataFrame:
             l.name as library_name,
             s.title as site_title
         FROM files f
-        JOIN libraries l ON f.library_id = l.id
-        JOIN sites s ON l.site_id = s.id
+        JOIN libraries l ON f.library_id = l.library_id
+        JOIN sites s ON l.site_id = s.site_id
         ORDER BY f.size_bytes DESC
         LIMIT ?
         """

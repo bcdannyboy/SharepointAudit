@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
@@ -30,6 +31,25 @@ class SharePointAPIClient:
         async def _do_get():
             await self.rate_limiter.acquire("simple_get")
             start = time.time()
+
+            # Get authentication token for SharePoint
+            credential = await self.auth_manager.get_credential()
+            # Extract tenant name from URL
+            match = re.search(r'https://([^.]+)\.sharepoint\.com', url)
+            if match:
+                tenant_name = match.group(1)
+                scope = f"https://{tenant_name}.sharepoint.com/.default"
+            else:
+                # Fallback to Graph API scope
+                scope = "https://graph.microsoft.com/.default"
+            token = credential.get_token(scope)
+
+            # Add authorization header
+            headers = kwargs.get("headers", {})
+            headers["Authorization"] = f"Bearer {token.token}"
+            headers["Accept"] = "application/json"
+            kwargs["headers"] = headers
+
             async with aiohttp.ClientSession() as session:
                 resp = await session.get(url, **kwargs)
                 if resp.status == 429:
@@ -54,6 +74,26 @@ class SharePointAPIClient:
         async def _do_post():
             await self.rate_limiter.acquire("simple_get")
             start = time.time()
+
+            # Get authentication token for SharePoint
+            credential = await self.auth_manager.get_credential()
+            # Extract tenant name from URL
+            match = re.search(r'https://([^.]+)\.sharepoint\.com', url)
+            if match:
+                tenant_name = match.group(1)
+                scope = f"https://{tenant_name}.sharepoint.com/.default"
+            else:
+                # Fallback to Graph API scope
+                scope = "https://graph.microsoft.com/.default"
+            token = credential.get_token(scope)
+
+            # Add authorization header
+            headers = kwargs.get("headers", {})
+            headers["Authorization"] = f"Bearer {token.token}"
+            headers["Accept"] = "application/json"
+            headers["Content-Type"] = "application/json"
+            kwargs["headers"] = headers
+
             async with aiohttp.ClientSession() as session:
                 resp = await session.post(url, **kwargs)
                 if resp.status == 429:
@@ -77,8 +117,28 @@ class SharePointAPIClient:
             await self.rate_limiter.acquire("batch_request")
             payload = {"requests": requests}
             start = time.time()
+
+            # Get authentication token for SharePoint
+            credential = await self.auth_manager.get_credential()
+            # Extract tenant name from URL
+            match = re.search(r'https://([^.]+)\.sharepoint\.com', url)
+            if match:
+                tenant_name = match.group(1)
+                scope = f"https://{tenant_name}.sharepoint.com/.default"
+            else:
+                # Fallback to Graph API scope
+                scope = "https://graph.microsoft.com/.default"
+            token = credential.get_token(scope)
+
+            # Add authorization header
+            headers = {
+                "Authorization": f"Bearer {token.token}",
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
+
             async with aiohttp.ClientSession() as session:
-                resp = await session.post(url, json=payload)
+                resp = await session.post(url, json=payload, headers=headers)
                 if resp.status == 429:
                     retry_after = int(resp.headers.get("Retry-After", "1"))
                     raise SharePointAPIError(
@@ -101,11 +161,6 @@ class SharePointAPIClient:
         api_url = f"{site_url}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings"
 
         try:
-            # Get SharePoint context for authentication
-            # TODO: Use context for authenticated requests once integrated
-            # context = await self.auth_manager.get_sharepoint_context(site_url)
-
-            # For now, using the REST API directly
             response = await self.get_with_retry(api_url)
             return response.get("value", [])
         except Exception as e:

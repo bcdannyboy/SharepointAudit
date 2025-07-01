@@ -239,26 +239,21 @@ class DatabaseRepository:
 
     async def get_sites_summary(self) -> Dict[str, Any]:
         """Get a summary of sites in the database."""
+        # Get counts separately to avoid JOIN issues
         total_sites = await self.count_rows("sites")
+        total_libraries = await self.count_rows("libraries")
+        total_files = await self.count_rows("files")
 
-        query = """
-        SELECT
-            COUNT(DISTINCT s.id) as site_count,
-            COUNT(DISTINCT l.id) as library_count,
-            COUNT(DISTINCT f.id) as file_count,
-            SUM(f.size_bytes) as total_size_bytes
-        FROM sites s
-        LEFT JOIN libraries l ON s.id = l.site_id
-        LEFT JOIN files f ON l.id = f.library_id
-        """
-
-        result = await self.fetch_one(query)
+        # Get total size
+        size_query = "SELECT SUM(size_bytes) as total_size_bytes FROM files"
+        size_result = await self.fetch_one(size_query)
+        total_size_bytes = size_result['total_size_bytes'] if size_result and size_result['total_size_bytes'] else 0
 
         return {
-            "total_sites": result['site_count'] if result else 0,
-            "total_libraries": result['library_count'] if result else 0,
-            "total_files": result['file_count'] if result else 0,
-            "total_size_bytes": result['total_size_bytes'] if result else 0,
+            "total_sites": total_sites,
+            "total_libraries": total_libraries,
+            "total_files": total_files,
+            "total_size_bytes": total_size_bytes,
         }
 
     async def get_permissions_summary(self) -> Dict[str, Any]:

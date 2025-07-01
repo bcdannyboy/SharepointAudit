@@ -168,7 +168,6 @@ class MockDiscoveryStage(PipelineStage):
 async def create_pipeline(config_path: str = "config/config.json",
                         run_id: Optional[str] = None,
                         dry_run: bool = False,
-                        analyze_permissions: bool = True,
                         active_only: bool = False) -> AuditPipeline:
     """Create and configure the audit pipeline."""
     # Load configuration
@@ -263,22 +262,21 @@ async def create_pipeline(config_path: str = "config/config.json",
     pipeline.add_stage(EnrichmentStage())
     pipeline.add_stage(StorageStage(db_repo))
 
-    # Add permission analysis stage if requested
-    if analyze_permissions:
-        logger.info("Adding permission analysis stage...")
+    # Always add permission analysis stage for comprehensive auditing
+    logger.info("Adding permission analysis stage...")
 
-        # Create cache manager
-        cache_manager = CacheManager(db_repo)
+    # Create cache manager
+    cache_manager = CacheManager(db_repo)
 
-        # Create permission analyzer
-        permission_analyzer = PermissionAnalyzer(
-            graph_client=graph_client,
-            sp_client=sp_client,
-            db_repo=db_repo,
-            cache_manager=cache_manager
-        )
+    # Create permission analyzer
+    permission_analyzer = PermissionAnalyzer(
+        graph_client=graph_client,
+        sp_client=sp_client,
+        db_repo=db_repo,
+        cache_manager=cache_manager
+    )
 
-        pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
+    pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
 
     return pipeline
 
@@ -341,12 +339,13 @@ async def main():
         "--run-id",
         help="Unique run ID (auto-generated if not provided)"
     )
-    parser.add_argument(
-        "--analyze-permissions",
-        action="store_true",
-        default=True,
-        help="Include permission analysis stage (enabled by default for comprehensive auditing)"
-    )
+    # Remove the --analyze-permissions flag since permissions should always be collected
+    # parser.add_argument(
+    #     "--analyze-permissions",
+    #     action="store_true",
+    #     default=True,
+    #     help="Include permission analysis stage (enabled by default for comprehensive auditing)"
+    # )
     parser.add_argument(
         "--active-only",
         action="store_true",
@@ -374,7 +373,6 @@ async def main():
             args.config,
             run_id,
             dry_run=args.dry_run,
-            analyze_permissions=args.analyze_permissions,
             active_only=args.active_only
         )
 

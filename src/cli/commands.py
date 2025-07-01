@@ -51,18 +51,18 @@ output = RichOutput()
 @click.option('--dry-run', is_flag=True, help='Show what would be done without making API calls.')
 @click.option('-v', '--verbose', count=True, help='Increase verbosity level (-v, -vv, -vvv).')
 @click.option('--resume', help='Resume a previous run by providing its run ID.')
-@click.option('--analyze-permissions', is_flag=True, default=True, help='Include permission analysis in the audit (enabled by default).')
+# Permissions are always analyzed for comprehensive auditing
 @click.option('--active-only', is_flag=True, help='Only scan active SharePoint sites (exclude inactive/archived sites).')
 @click.option('--output-format', type=click.Choice(['table', 'json', 'csv']), default='table',
               help='Format for summary output.')
 @click.option('--batch-size', type=int, default=100, help='Batch size for processing items.')
 @click.option('--max-concurrent', type=int, default=50, help='Maximum concurrent operations.')
 @click.pass_context
-def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, active_only, output_format, batch_size, max_concurrent):
+def audit(ctx, config, sites, dry_run, verbose, resume, active_only, output_format, batch_size, max_concurrent):
     """Run a comprehensive SharePoint audit.
 
     This command discovers and audits all SharePoint sites, libraries, folders,
-    files, and optionally permissions in your tenant.
+    files, and permissions in your tenant.
     """
     # Setup logging based on verbosity
     setup_logging(verbose)
@@ -75,7 +75,6 @@ def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, act
         'target_sites': sites.split(',') if sites else None,
         'batch_size': batch_size,
         'max_concurrent': max_concurrent,
-        'analyze_permissions': analyze_permissions,
         'active_only': active_only
     }
 
@@ -92,7 +91,7 @@ def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, act
             return
 
         # Run the audit
-        asyncio.run(_run_audit(ctx, final_config, resume, analyze_permissions, active_only, output_format))
+        asyncio.run(_run_audit(ctx, final_config, resume, active_only, output_format))
 
     except FileNotFoundError as e:
         output.error(f"Configuration file not found: {e}")
@@ -110,7 +109,7 @@ def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, act
 
 
 async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
-                    analyze_permissions: bool, active_only: bool, output_format: str):
+                    active_only: bool, output_format: str):
     """Run the actual audit pipeline."""
     # Generate or use existing run ID
     run_id = resume_id or f"audit_run_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
@@ -189,16 +188,16 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
     pipeline.add_stage(EnrichmentStage())
     pipeline.add_stage(StorageStage(db_repo))
 
-    if analyze_permissions:
-        output.info("Permission analysis enabled")
-        cache_manager = CacheManager(db_repo)
-        permission_analyzer = PermissionAnalyzer(
-            graph_client=graph_client,
-            sp_client=sp_client,
-            db_repo=db_repo,
-            cache_manager=cache_manager
-        )
-        pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
+    # Always add permission analysis for comprehensive auditing
+    output.info("Adding permission analysis stage...")
+    cache_manager = CacheManager(db_repo)
+    permission_analyzer = PermissionAnalyzer(
+        graph_client=graph_client,
+        sp_client=sp_client,
+        db_repo=db_repo,
+        cache_manager=cache_manager
+    )
+    pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
 
     # Run pipeline with progress tracking
     output.info("Starting audit pipeline...")
