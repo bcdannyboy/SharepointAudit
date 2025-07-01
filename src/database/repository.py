@@ -81,14 +81,22 @@ class DatabaseRepository:
 
         # Build the update clause for ON CONFLICT
         update_columns = [c for c in columns if c not in unique_columns]
-        update_clause = ", ".join([f"{c} = excluded.{c}" for c in update_columns])
 
-        query = f"""
-            INSERT INTO {table_name} ({','.join(columns)})
-            VALUES ({placeholders})
-            ON CONFLICT ({','.join(unique_columns)})
-            DO UPDATE SET {update_clause}
-        """
+        if update_columns:
+            # Update non-unique columns on conflict
+            update_clause = ", ".join([f"{c} = excluded.{c}" for c in update_columns])
+            query = f"""
+                INSERT INTO {table_name} ({','.join(columns)})
+                VALUES ({placeholders})
+                ON CONFLICT ({','.join(unique_columns)})
+                DO UPDATE SET {update_clause}
+            """
+        else:
+            # No columns to update, just ignore duplicates
+            query = f"""
+                INSERT OR IGNORE INTO {table_name} ({','.join(columns)})
+                VALUES ({placeholders})
+            """
 
         total = 0
         async with self.transaction() as conn:

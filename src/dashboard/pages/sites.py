@@ -4,7 +4,15 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from ...database.repository import DatabaseRepository
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+parent_dir = Path(__file__).parent.parent.parent.parent
+if str(parent_dir) not in sys.path:
+    sys.path.insert(0, str(parent_dir))
+
+from src.database.repository import DatabaseRepository
 
 
 @st.cache_data(ttl=300)
@@ -37,20 +45,41 @@ def load_sites_data(db_path: str) -> pd.DataFrame:
     data = asyncio.run(_load())
     df = pd.DataFrame(data)
 
-    # Convert storage to GB for better readability
+    # Convert numeric columns and handle None/null values
     if not df.empty:
-        df["storage_used_gb"] = (
-            df["storage_used"] / (1024**3) if "storage_used" in df else 0
-        )
-        df["storage_quota_gb"] = (
-            df["storage_quota"] / (1024**3) if "storage_quota" in df else 0
-        )
-        df["total_file_size_gb"] = (
-            df["total_file_size"] / (1024**3) if "total_file_size" in df else 0
-        )
-        df["storage_usage_pct"] = (
-            df["storage_used"] / df["storage_quota"] * 100
-        ).fillna(0)
+        # Convert count columns to numeric
+        for col in ['library_count', 'file_count']:
+            if col in df:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+        # Convert storage columns to numeric, handling None/null values
+        if "storage_used" in df:
+            df["storage_used"] = pd.to_numeric(df["storage_used"], errors='coerce').fillna(0)
+            df["storage_used_gb"] = df["storage_used"] / (1024**3)
+        else:
+            df["storage_used_gb"] = 0
+
+        if "storage_quota" in df:
+            df["storage_quota"] = pd.to_numeric(df["storage_quota"], errors='coerce').fillna(0)
+            df["storage_quota_gb"] = df["storage_quota"] / (1024**3)
+        else:
+            df["storage_quota_gb"] = 0
+
+        if "total_file_size" in df:
+            df["total_file_size"] = pd.to_numeric(df["total_file_size"], errors='coerce').fillna(0)
+            df["total_file_size_gb"] = df["total_file_size"] / (1024**3)
+        else:
+            df["total_file_size_gb"] = 0
+
+        # Calculate storage usage percentage
+        if "storage_used" in df and "storage_quota" in df:
+            # Avoid division by zero
+            df["storage_usage_pct"] = df.apply(
+                lambda row: (row["storage_used"] / row["storage_quota"] * 100)
+                if row["storage_quota"] > 0 else 0,
+                axis=1
+            )
+        else:
+            df["storage_usage_pct"] = 0
 
     return df
 
@@ -90,11 +119,17 @@ def render(db_path: str):
         st.metric("Total Sites", len(sites_df))
 
     with col2:
-        total_storage_gb = sites_df["storage_used_gb"].sum()
+        if "storage_used_gb" in sites_df and not sites_df.empty:
+            total_storage_gb = sites_df["storage_used_gb"].sum()
+        else:
+            total_storage_gb = 0
         st.metric("Total Storage Used", f"{total_storage_gb:.2f} GB")
 
     with col3:
-        avg_files_per_site = sites_df["file_count"].mean()
+        if "file_count" in sites_df and not sites_df.empty:
+            avg_files_per_site = sites_df["file_count"].mean()
+        else:
+            avg_files_per_site = 0
         st.metric("Avg Files per Site", f"{avg_files_per_site:.0f}")
 
     with col4:
@@ -108,28 +143,44 @@ def render(db_path: str):
 
     with col1:
         # Top 10 sites by storage
-        top_sites = sites_df.nlargest(10, "storage_used_gb")
-        fig_bar = px.bar(
-            top_sites,
-            x="storage_used_gb",
-            y="title",
-            orientation="h",
-            title="Top 10 Sites by Storage Usage",
-            labels={"storage_used_gb": "Storage (GB)", "title": "Site"},
-        )
-        fig_bar.update_layout(height=400)
-        st.plotly_chart(fig_bar, use_container_width=True)
+        if "storage_used_gb" in sites_df and len(sites_df) > 0:
+            # Ensure storage_used_gb is numeric
+            sites_df["storage_used_gb"] = pd.to_numeric(sites_df["storage_used_gb"], errors='coerce').fillna(0)
+            top_sites = sites_df.nlargest(min(10, len(sites_df)), "storage_used_gb")
+        else:
+            top_sites = pd.DataFrame()
+        if not top_sites.empty:
+            fig_bar = px.bar(
+                top_sites,
+                x="storage_used_gb",
+                y="title",
+                orientation="h",
+                title="Top 10 Sites by Storage Usage",
+                labels={"storage_used_gb": "Storage (GB)", "title": "Site"},
+            )
+            fig_bar.update_layout(height=400)
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("No storage data available for sites.")
 
     with col2:
         # Storage usage distribution
-        fig_pie = px.pie(
-            sites_df.nlargest(10, "storage_used_gb"),
-            values="storage_used_gb",
-            names="title",
-            title="Storage Distribution (Top 10 Sites)",
-        )
-        fig_pie.update_layout(height=400)
-        st.plotly_chart(fig_pie, use_container_width=True)
+        if "storage_used_gb" in sites_df and len(sites_df) > 0:
+            # Get top 10 sites for pie chart
+            top_sites_pie = sites_df.nlargest(min(10, len(sites_df)), "storage_used_gb")
+            if not top_sites_pie.empty and top_sites_pie["storage_used_gb"].sum() > 0:
+                fig_pie = px.pie(
+                    top_sites_pie,
+                    values="storage_used_gb",
+                    names="title",
+                    title="Storage Distribution (Top 10 Sites)",
+                )
+                fig_pie.update_layout(height=400)
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.info("No storage data to display in pie chart.")
+        else:
+            st.info("No storage data available.")
 
     # Sites table with search and filters
     st.subheader("Sites Details")
@@ -182,10 +233,17 @@ def render(db_path: str):
     # Only include columns that exist in the dataframe
     display_columns = [col for col in display_columns if col in filtered_df.columns]
 
-    st.dataframe(
-        filtered_df[display_columns].sort_values("storage_used_gb", ascending=False),
-        use_container_width=True,
-        hide_index=True,
+    if display_columns and not filtered_df.empty:
+        # Sort by storage if the column exists, otherwise just display
+        if "storage_used_gb" in display_columns:
+            filtered_df = filtered_df[display_columns].sort_values("storage_used_gb", ascending=False)
+        else:
+            filtered_df = filtered_df[display_columns]
+
+        st.dataframe(
+            filtered_df,
+            use_container_width=True,
+            hide_index=True,
         column_config={
             "title": st.column_config.TextColumn("Site Title"),
             "url": st.column_config.LinkColumn("URL"),
@@ -200,27 +258,37 @@ def render(db_path: str):
             "is_hub_site": st.column_config.CheckboxColumn("Hub Site"),
             "last_modified": st.column_config.DatetimeColumn("Last Modified"),
         },
-    )
-
-    st.info(f"Showing {len(filtered_df)} of {len(sites_df)} sites")
+        )
+        st.info(f"Showing {len(filtered_df)} of {len(sites_df)} sites")
+    else:
+        st.info("No sites match the current filters.")
 
     # Storage trends (if we have historical data)
     st.subheader("Storage Analytics")
 
     if not storage_df.empty:
+        # Ensure numeric columns for scatter plot
+        numeric_cols = ['file_count', 'total_size_bytes', 'library_count', 'avg_file_size']
+        for col in numeric_cols:
+            if col in storage_df:
+                storage_df[col] = pd.to_numeric(storage_df[col], errors='coerce').fillna(0)
+
         # Create a scatter plot of sites by file count vs storage
-        fig_scatter = px.scatter(
-            storage_df,
-            x="file_count",
-            y="total_size_bytes",
-            size="library_count",
-            hover_data=["site_title", "avg_file_size"],
-            title="Sites: File Count vs Storage Usage",
-            labels={
-                "file_count": "Number of Files",
-                "total_size_bytes": "Total Storage (bytes)",
-                "library_count": "Number of Libraries",
-            },
-        )
-        fig_scatter.update_layout(height=500)
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        if all(col in storage_df for col in ['file_count', 'total_size_bytes', 'library_count']):
+            fig_scatter = px.scatter(
+                storage_df,
+                x="file_count",
+                y="total_size_bytes",
+                size="library_count",
+                hover_data=["site_title", "avg_file_size"] if "avg_file_size" in storage_df else ["site_title"],
+                title="Sites: File Count vs Storage Usage",
+                labels={
+                    "file_count": "Number of Files",
+                    "total_size_bytes": "Total Storage (bytes)",
+                    "library_count": "Number of Libraries",
+                },
+            )
+            fig_scatter.update_layout(height=500)
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("Insufficient data for storage analytics visualization.")

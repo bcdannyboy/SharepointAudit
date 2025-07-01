@@ -51,13 +51,14 @@ output = RichOutput()
 @click.option('--dry-run', is_flag=True, help='Show what would be done without making API calls.')
 @click.option('-v', '--verbose', count=True, help='Increase verbosity level (-v, -vv, -vvv).')
 @click.option('--resume', help='Resume a previous run by providing its run ID.')
-@click.option('--analyze-permissions', is_flag=True, help='Include permission analysis in the audit.')
+@click.option('--analyze-permissions', is_flag=True, default=True, help='Include permission analysis in the audit (enabled by default).')
+@click.option('--active-only', is_flag=True, help='Only scan active SharePoint sites (exclude inactive/archived sites).')
 @click.option('--output-format', type=click.Choice(['table', 'json', 'csv']), default='table',
               help='Format for summary output.')
 @click.option('--batch-size', type=int, default=100, help='Batch size for processing items.')
 @click.option('--max-concurrent', type=int, default=50, help='Maximum concurrent operations.')
 @click.pass_context
-def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, output_format, batch_size, max_concurrent):
+def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, active_only, output_format, batch_size, max_concurrent):
     """Run a comprehensive SharePoint audit.
 
     This command discovers and audits all SharePoint sites, libraries, folders,
@@ -74,7 +75,8 @@ def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, out
         'target_sites': sites.split(',') if sites else None,
         'batch_size': batch_size,
         'max_concurrent': max_concurrent,
-        'analyze_permissions': analyze_permissions
+        'analyze_permissions': analyze_permissions,
+        'active_only': active_only
     }
 
     try:
@@ -90,7 +92,7 @@ def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, out
             return
 
         # Run the audit
-        asyncio.run(_run_audit(ctx, final_config, resume, analyze_permissions, output_format))
+        asyncio.run(_run_audit(ctx, final_config, resume, analyze_permissions, active_only, output_format))
 
     except FileNotFoundError as e:
         output.error(f"Configuration file not found: {e}")
@@ -108,7 +110,7 @@ def audit(ctx, config, sites, dry_run, verbose, resume, analyze_permissions, out
 
 
 async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
-                    analyze_permissions: bool, output_format: str):
+                    analyze_permissions: bool, active_only: bool, output_format: str):
     """Run the actual audit pipeline."""
     # Generate or use existing run ID
     run_id = resume_id or f"audit_run_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
@@ -160,7 +162,8 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
         db_repo,
         checkpoint_manager,
         max_concurrent_sites=config.get('max_concurrent', 50),
-        max_concurrent_operations=config.get('max_concurrent', 50)
+        max_concurrent_operations=config.get('max_concurrent', 50),
+        active_only=active_only
     )
 
     # Create pipeline context
@@ -317,7 +320,7 @@ def _show_audit_results(result: PipelineContext, output_format: str):
 
 @click.command()
 @click.option('--db-path', required=True, help='Path to the audit database file.')
-@click.option('--port', default=8501, help='Port to run the dashboard on.')
+@click.option('--port', default=9999, help='Port to run the dashboard on.')
 @click.option('--no-browser', is_flag=True, help='Do not open browser automatically.')
 @click.pass_context
 def dashboard(ctx, db_path, port, no_browser):

@@ -3,7 +3,15 @@ import io
 from datetime import datetime
 import streamlit as st
 import pandas as pd
-from ...database.repository import DatabaseRepository
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+parent_dir = Path(__file__).parent.parent.parent.parent
+if str(parent_dir) not in sys.path:
+    sys.path.insert(0, str(parent_dir))
+
+from src.database.repository import DatabaseRepository
 
 
 @st.cache_data(ttl=60)

@@ -2,7 +2,15 @@ import asyncio
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from ...database.repository import DatabaseRepository
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+parent_dir = Path(__file__).parent.parent.parent.parent
+if str(parent_dir) not in sys.path:
+    sys.path.insert(0, str(parent_dir))
+
+from src.database.repository import DatabaseRepository
 
 
 @st.cache_data(ttl=300)
@@ -18,7 +26,7 @@ def load_summary_data(db_path: str) -> dict:
 
         # Get latest audit run info
         audit_query = """
-        SELECT run_id, status, started_at, completed_at, error_message
+        SELECT run_id, status, started_at, completed_at, error_details
         FROM audit_runs
         ORDER BY started_at DESC
         LIMIT 1
@@ -147,49 +155,56 @@ def render(db_path: str) -> None:
             f"Status: :{status_color}[{audit['status']}] - "
             f"Started: {audit['started_at']}"
         )
-        if audit["error_message"]:
-            st.error(f"Error: {audit['error_message']}")
+        if audit.get("error_details"):
+            st.error(f"Error: {audit['error_details']}")
 
     # Key metrics
     st.subheader("Key Metrics")
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
-        st.metric("Total Sites", f"{summary['sites']['total_sites']:,}")
+        total_sites = summary['sites'].get('total_sites', 0)
+        st.metric("Total Sites", f"{total_sites:,}")
 
     with col2:
-        st.metric("Total Libraries", f"{summary['sites']['total_libraries']:,}")
+        total_libraries = summary['sites'].get('total_libraries', 0)
+        st.metric("Total Libraries", f"{total_libraries:,}")
 
     with col3:
-        st.metric("Total Files", f"{summary['sites']['total_files']:,}")
+        total_files = summary['sites'].get('total_files', 0)
+        st.metric("Total Files", f"{total_files:,}")
 
     with col4:
-        total_gb = (summary["sites"]["total_size_bytes"] or 0) / (1024**3)
+        total_bytes = summary["sites"].get("total_size_bytes") or 0
+        total_gb = total_bytes / (1024**3) if total_bytes else 0
         st.metric("Total Storage", f"{total_gb:.2f} GB")
 
     with col5:
-        st.metric("External Users", f"{summary['external_users']:,}")
+        external_users = summary.get('external_users', 0)
+        st.metric("External Users", f"{external_users:,}")
 
     # Permission insights
     st.subheader("Permission Insights")
     col1, col2, col3 = st.columns(3)
 
     with col1:
+        total_permissions = summary['permissions'].get('total_permissions', 0)
         st.metric(
-            "Total Permissions", f"{summary['permissions']['total_permissions']:,}"
+            "Total Permissions", f"{total_permissions:,}"
         )
 
     with col2:
+        unique_permissions = summary['permissions'].get('unique_permissions', 0)
         st.metric(
-            "Unique Permissions", f"{summary['permissions']['unique_permissions']:,}"
+            "Unique Permissions", f"{unique_permissions:,}"
         )
 
     with col3:
+        total_perms = summary["permissions"].get("total_permissions", 0)
+        unique_perms = summary["permissions"].get("unique_permissions", 0)
         unique_pct = (
-            summary["permissions"]["unique_permissions"]
-            / summary["permissions"]["total_permissions"]
-            * 100
-            if summary["permissions"]["total_permissions"] > 0
+            (unique_perms / total_perms * 100)
+            if total_perms > 0
             else 0
         )
         st.metric("Unique %", f"{unique_pct:.1f}%")
@@ -233,18 +248,21 @@ def render(db_path: str) -> None:
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            avg_mb = (stats["avg_size"] or 0) / (1024**2)
+            avg_size = stats.get("avg_size") or 0
+            avg_mb = avg_size / (1024**2) if avg_size else 0
             st.metric("Avg File Size", f"{avg_mb:.2f} MB")
 
         with col2:
-            max_mb = (stats["max_size"] or 0) / (1024**2)
+            max_size = stats.get("max_size") or 0
+            max_mb = max_size / (1024**2) if max_size else 0
             st.metric("Largest File", f"{max_mb:.2f} MB")
 
         with col3:
-            st.metric("File Types", f"{stats['file_types'] or 0}")
+            file_types = stats.get('file_types', 0)
+            st.metric("File Types", f"{file_types}")
 
         with col4:
-            total_files = stats["total_files"] or 0
+            total_files = stats.get("total_files", 0)
             st.metric("Total Files", f"{total_files:,}")
 
     # Recent activity
@@ -277,17 +295,17 @@ def render(db_path: str) -> None:
     # Calculate some insights
     insights = []
 
-    if summary["permissions"]["unique_permissions"] > 100:
+    if summary["permissions"].get("unique_permissions", 0) > 100:
         insights.append(
             "⚠️ High number of unique permissions detected. Consider reviewing permission inheritance."
         )
 
-    if summary["external_users"] > 0:
+    if summary.get("external_users", 0) > 0:
         insights.append(
             f"👥 {summary['external_users']} external users have access to your SharePoint content."
         )
 
-    if summary["sites"]["total_sites"] > 0:
+    if summary["sites"].get("total_sites", 0) > 0 and summary["sites"].get("total_size_bytes"):
         avg_storage_per_site = (
             summary["sites"]["total_size_bytes"]
             / summary["sites"]["total_sites"]

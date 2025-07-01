@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 import time
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from .exceptions import (
     CircuitBreakerOpenError,
     MaxRetriesExceededError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class CircuitState(Enum):
@@ -55,6 +58,7 @@ class RetryConfig:
     max_delay: float = 30.0
     circuit_breaker_threshold: int = 5
     circuit_breaker_timeout: int = 60
+    request_timeout: float = 120.0  # Timeout for individual requests
 
 
 class RetryStrategy:
@@ -74,17 +78,38 @@ class RetryStrategy:
 
         while attempt < self.config.max_attempts:
             try:
-                result = await func(*args, **kwargs)
+                logger.debug(f"[RETRY] Attempt {attempt + 1}/{self.config.max_attempts} for {operation_id}")
+
+                # Execute with timeout
+                try:
+                    result = await asyncio.wait_for(
+                        func(*args, **kwargs),
+                        timeout=self.config.request_timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"[RETRY] Request timeout after {self.config.request_timeout}s for {operation_id}")
+                    raise TimeoutError(f"Request timed out after {self.config.request_timeout}s")
+
                 breaker.record_success()
                 return result
             except Exception as exc:  # pragma: no cover - simple fallback
                 last_error = exc
                 breaker.record_failure()
+
+                # Log the error with context
+                logger.warning(
+                    f"[RETRY] Attempt {attempt + 1} failed for {operation_id}: {type(exc).__name__}: {str(exc)}"
+                )
+
                 if not self._is_retryable(exc) or attempt >= self.config.max_attempts - 1:
+                    logger.error(f"[RETRY] Giving up on {operation_id} after {attempt + 1} attempts")
                     raise
+
                 backoff = self._calculate_backoff(attempt)
                 jitter = random.uniform(0, backoff * 0.1)
-                await asyncio.sleep(backoff + jitter)
+                delay = backoff + jitter
+                logger.debug(f"[RETRY] Waiting {delay:.2f}s before retry")
+                await asyncio.sleep(delay)
                 attempt += 1
 
         raise MaxRetriesExceededError(f"Max retries exceeded for {operation_id}: {last_error}")

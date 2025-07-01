@@ -5,6 +5,8 @@ import asyncio
 import logging
 import sys
 import uuid
+import threading
+import signal
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -166,7 +168,8 @@ class MockDiscoveryStage(PipelineStage):
 async def create_pipeline(config_path: str = "config/config.json",
                         run_id: Optional[str] = None,
                         dry_run: bool = False,
-                        analyze_permissions: bool = False) -> AuditPipeline:
+                        analyze_permissions: bool = True,
+                        active_only: bool = False) -> AuditPipeline:
     """Create and configure the audit pipeline."""
     # Load configuration
     logger.info(f"Loading configuration from {config_path}")
@@ -223,8 +226,9 @@ async def create_pipeline(config_path: str = "config/config.json",
         sp_client,
         db_repo,
         checkpoint_manager,
-        max_concurrent_sites=20,
-        max_concurrent_operations=50
+        max_concurrent_sites=10,  # Reduced from 20
+        max_concurrent_operations=20,  # Reduced from 50 to prevent semaphore exhaustion
+        active_only=active_only
     )
 
     # Create pipeline context
@@ -279,6 +283,50 @@ async def create_pipeline(config_path: str = "config/config.json",
     return pipeline
 
 
+async def monitor_tasks():
+    """Monitor active asyncio tasks and log their status."""
+    while True:
+        try:
+            all_tasks = asyncio.all_tasks()
+            logger.debug(f"[DEBUG MONITOR] Active tasks: {len(all_tasks)}")
+
+            # Show details of long-running tasks
+            for task in all_tasks:
+                if not task.done():
+                    coro = task.get_coro()
+                    logger.debug(f"[DEBUG MONITOR] Active task: {coro}")
+
+            await asyncio.sleep(30)  # Check every 30 seconds
+        except Exception as e:
+            logger.error(f"[DEBUG MONITOR] Error in task monitor: {e}")
+            await asyncio.sleep(30)
+
+
+async def main_with_timeout():
+    """Main function with timeout and monitoring."""
+    # Start the task monitor
+    monitor_task = asyncio.create_task(monitor_tasks())
+
+    try:
+        # Run main with a timeout
+        await asyncio.wait_for(main(), timeout=3600)  # 1 hour timeout
+    except asyncio.TimeoutError:
+        logger.error("[ERROR] Pipeline execution timed out after 1 hour")
+        # Log all active tasks when timeout occurs
+        all_tasks = asyncio.all_tasks()
+        logger.error(f"[ERROR] {len(all_tasks)} tasks were still active at timeout:")
+        for task in all_tasks:
+            if not task.done():
+                logger.error(f"[ERROR] Active task: {task.get_coro()}")
+        raise
+    finally:
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
+
+
 async def main():
     """Main entry point for the pipeline runner."""
     import argparse
@@ -296,7 +344,13 @@ async def main():
     parser.add_argument(
         "--analyze-permissions",
         action="store_true",
-        help="Include permission analysis stage (Phase 5)"
+        default=True,
+        help="Include permission analysis stage (enabled by default for comprehensive auditing)"
+    )
+    parser.add_argument(
+        "--active-only",
+        action="store_true",
+        help="Only scan active SharePoint sites (exclude inactive/archived sites)"
     )
     parser.add_argument(
         "--dry-run",
@@ -320,7 +374,8 @@ async def main():
             args.config,
             run_id,
             dry_run=args.dry_run,
-            analyze_permissions=args.analyze_permissions
+            analyze_permissions=args.analyze_permissions,
+            active_only=args.active_only
         )
 
         if args.resume:
@@ -395,5 +450,13 @@ if __name__ == "__main__":
         print("Error: Python 3.11 or higher is required")
         sys.exit(1)
 
-    # Run the main function
-    asyncio.run(main())
+    # Set up signal handlers for debugging
+    def dump_threads(signum, frame):
+        logger.info("[DEBUG] Thread dump requested")
+        for thread in threading.enumerate():
+            logger.info(f"[DEBUG] Thread: {thread.name} (alive: {thread.is_alive()})")
+
+    signal.signal(signal.SIGUSR1, dump_threads)
+
+    # Run the main function with monitoring
+    asyncio.run(main_with_timeout())
