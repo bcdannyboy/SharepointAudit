@@ -169,7 +169,8 @@ async def create_pipeline(config_path: str = "config/config.json",
                         run_id: Optional[str] = None,
                         dry_run: bool = False,
                         active_only: bool = False,
-                        sites_to_process: Optional[List[str]] = None) -> AuditPipeline:
+                        sites_to_process: Optional[List[str]] = None,
+                        limit: Optional[int] = None) -> AuditPipeline:
     """Create and configure the audit pipeline."""
     # Load configuration
     logger.info(f"Loading configuration from {config_path}")
@@ -227,8 +228,13 @@ async def create_pipeline(config_path: str = "config/config.json",
         db_repo,
         cache=None,
         checkpoints=checkpoint_manager,
-        max_concurrent_operations=20  # Reduced from 50 to prevent semaphore exhaustion
+        max_concurrent_operations=3  # Further reduced to prevent deadlock
     )
+
+    # Set limit if provided
+    if limit:
+        discovery_module.site_limit = limit
+        logger.info(f"Limiting discovery to {limit} sites")
 
     # Create pipeline context
     if not run_id:
@@ -370,6 +376,11 @@ async def main():
         "--sites",
         help="Comma-separated list of specific site URLs to audit"
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Limit the number of sites to process (for testing)"
+    )
 
     args = parser.parse_args()
 
@@ -390,7 +401,8 @@ async def main():
             run_id,
             dry_run=args.dry_run,
             active_only=args.active_only,
-            sites_to_process=sites_to_process
+            sites_to_process=sites_to_process,
+            limit=args.limit
         )
 
         if args.resume:

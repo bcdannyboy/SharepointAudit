@@ -41,12 +41,14 @@ class DiscoveryModule(QueueBasedDiscovery):
 
         # Concurrency control
         self.concurrency_manager = ConcurrencyManager(max_concurrent_operations)
-        self.operation_semaphore = asyncio.Semaphore(max_concurrent_operations)
+        # Remove redundant semaphore to prevent deadlock
+        # self.operation_semaphore = asyncio.Semaphore(max_concurrent_operations)
 
         # Discovery state
         self.discovered_counts = {"sites": 0, "libraries": 0, "folders": 0, "files": 0}
         self.processed_sites = 0
         self.sites_with_errors: Set[str] = set()
+        self.site_limit = None  # Optional limit on number of sites to process
 
     async def run_discovery(
         self, run_id: str, sites_to_process: Optional[List[str]] = None
@@ -83,13 +85,30 @@ class DiscoveryModule(QueueBasedDiscovery):
                     f"Filtered to {len(sites)} sites matching: {sites_to_process}"
                 )
 
+            # Apply site limit if set
+            if self.site_limit and len(sites) > self.site_limit:
+                logger.info(f"Applying site limit: {self.site_limit} of {len(sites)} sites")
+                sites = sites[:self.site_limit]
+
             self.discovered_counts["sites"] = len(sites)
             logger.info(f"Discovered {len(sites)} sites to process")
 
-            # Process sites in parallel with controlled concurrency
-            tasks = [self._discover_site_with_semaphore(run_id, site) for site in sites]
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+            # Process sites in batches to avoid overwhelming the system
+            batch_size = 3  # Process 3 sites at a time to match max_concurrent_operations
+            for i in range(0, len(sites), batch_size):
+                batch = sites[i:i + batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1} of {(len(sites) + batch_size - 1)//batch_size} ({len(batch)} sites)")
+
+                tasks = [self._discover_site_with_semaphore(run_id, site) for site in batch]
+                if tasks:
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    # Log any exceptions
+                    for j, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            site = batch[j]
+                            site_name = site.get("displayName", "Unknown") if isinstance(site, dict) else getattr(site, "displayName", "Unknown")
+                            logger.error(f"Failed to process site {site_name}: {result}")
 
             # Final summary
             elapsed_time = time.time() - start_time
@@ -186,9 +205,21 @@ class DiscoveryModule(QueueBasedDiscovery):
             raise
 
     async def _discover_site_with_semaphore(self, run_id: str, site: Any) -> None:
-        """Discover a single site with semaphore control."""
-        async with self.operation_semaphore:
-            await self._discover_single_site(run_id, site)
+        """Discover a single site with semaphore control and timeout."""
+        try:
+            # Add timeout to prevent hanging (5 minutes per site)
+            await asyncio.wait_for(
+                self.concurrency_manager.run_api_task(
+                    self._discover_single_site(run_id, site)
+                ),
+                timeout=300  # 5 minutes timeout
+            )
+        except asyncio.TimeoutError:
+            site_name = site.get("displayName", "Unknown") if isinstance(site, dict) else getattr(site, "displayName", "Unknown")
+            logger.error(f"Timeout while processing site {site_name}")
+            site_id = site.get("id", "") if isinstance(site, dict) else getattr(site, "id", "")
+            if site_id:
+                self.sites_with_errors.add(site_id)
 
     async def _discover_single_site(self, run_id: str, site: Any) -> None:
         """Discover content for a single site."""
@@ -262,61 +293,60 @@ class DiscoveryModule(QueueBasedDiscovery):
 
     async def _discover_libraries(self, site: Any) -> List[Dict[str, Any]]:
         """Enumerate document libraries for the given site."""
-        async with self.operation_semaphore:
-            # Handle both dict and object access
-            if isinstance(site, dict):
-                site_id = site.get("id")
-                site_url = site.get("site_url", site.get("webUrl", site.get("url", "")))
-            else:
-                site_id = getattr(site, "id", None)
-                site_url = getattr(
-                    site, "site_url", getattr(site, "webUrl", getattr(site, "url", ""))
-                )
+        # Handle both dict and object access
+        if isinstance(site, dict):
+            site_id = site.get("id")
+            site_url = site.get("site_url", site.get("webUrl", site.get("url", "")))
+        else:
+            site_id = getattr(site, "id", None)
+            site_url = getattr(
+                site, "site_url", getattr(site, "webUrl", getattr(site, "url", ""))
+            )
 
-            if not site_id:
-                return []
+        if not site_id:
+            return []
 
-            try:
-                cache_key = f"site_libraries:{site_id}"
-                if self.cache:
-                    cached = await self.cache.get(cache_key)
-                    if cached is not None:
-                        return cached
+        try:
+            cache_key = f"site_libraries:{site_id}"
+            if self.cache:
+                cached = await self.cache.get(cache_key)
+                if cached is not None:
+                    return cached
 
-                url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
-                data = await self._run_api_task(self.graph_client.get_with_retry(url))
-                libraries = data.get("value", [])
+            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
+            data = await self._run_api_task(self.graph_client.get_with_retry(url))
+            libraries = data.get("value", [])
 
-                # Save libraries to database with site_url
-                if libraries:
-                    records = []
-                    for lib in libraries:
-                        record = {
-                            "library_id": lib.get("id"),
-                            "site_id": site_id,
-                            "site_url": site_url,
-                            "name": lib.get("name", ""),
-                            "description": lib.get("description"),
-                            "created_at": lib.get("createdDateTime"),
-                            "drive_id": lib.get("id"),
-                        }
-                        records.append(record)
+            # Save libraries to database with site_url
+            if libraries:
+                records = []
+                for lib in libraries:
+                    record = {
+                        "library_id": lib.get("id"),
+                        "site_id": site_id,
+                        "site_url": site_url,
+                        "name": lib.get("name", ""),
+                        "description": lib.get("description"),
+                        "created_at": lib.get("createdDateTime"),
+                        "drive_id": lib.get("id"),
+                    }
+                    records.append(record)
 
-                    if records:
-                        await self.db_repo.bulk_insert("libraries", records)
-                        self.discovered_counts["libraries"] += len(records)
-                        logger.info(
-                            f"Discovered {len(records)} libraries in site (Total: {self.discovered_counts['libraries']})"
-                        )
+                if records:
+                    await self.db_repo.bulk_insert("libraries", records)
+                    self.discovered_counts["libraries"] += len(records)
+                    logger.info(
+                        f"Discovered {len(records)} libraries in site (Total: {self.discovered_counts['libraries']})"
+                    )
 
-                if self.cache:
-                    await self.cache.set(cache_key, libraries, ttl=3600)
+            if self.cache:
+                await self.cache.set(cache_key, libraries, ttl=3600)
 
-                return libraries
+            return libraries
 
-            except Exception as e:
-                logger.error(f"Error discovering libraries for site {site_id}: {e}")
-                return []
+        except Exception as e:
+            logger.error(f"Error discovering libraries for site {site_id}: {e}")
+            return []
 
     async def _discover_library_contents(
         self, site: Dict[str, Any], library: Dict[str, Any]
@@ -365,36 +395,35 @@ class DiscoveryModule(QueueBasedDiscovery):
                     continue
 
                 # Acquire semaphore only for the API call
-                async with self.operation_semaphore:
-                    try:
-                        # Construct the URL
-                        if folder_item_id == "root":
-                            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root/children?$top=200"
-                        else:
-                            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{folder_item_id}/children?$top=200"
+                try:
+                    # Construct the URL
+                    if folder_item_id == "root":
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root/children?$top=200"
+                    else:
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{folder_item_id}/children?$top=200"
 
-                        # Fetch items
-                        start_time = time.time()
-                        items = []
+                    # Fetch items
+                    start_time = time.time()
+                    items = []
 
-                        while url:
-                            data = await self._run_api_task(
-                                self.graph_client.get_with_retry(url)
-                            )
-
-                            items.extend(data.get("value", []))
-                            url = data.get("@odata.nextLink")
-
-                        elapsed = time.time() - start_time
-                        logger.debug(
-                            f"[QUEUE] Fetched {len(items)} items from {folder_path} in {elapsed:.2f}s"
+                    while url:
+                        data = await self._run_api_task(
+                            self.graph_client.get_with_retry(url)
                         )
 
-                    except Exception as e:
-                        logger.error(
-                            f"[QUEUE] Error fetching items from {folder_path}: {e}"
-                        )
-                        continue
+                        items.extend(data.get("value", []))
+                        url = data.get("@odata.nextLink")
+
+                    elapsed = time.time() - start_time
+                    logger.debug(
+                        f"[QUEUE] Fetched {len(items)} items from {folder_path} in {elapsed:.2f}s"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"[QUEUE] Error fetching items from {folder_path}: {e}"
+                    )
+                    continue
 
                 # Process items outside the semaphore
                 for item in items:
