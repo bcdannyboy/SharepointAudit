@@ -13,7 +13,14 @@ from typing import Optional, List, Dict, Any
 
 import click
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    TaskProgressColumn,
+    TimeRemainingColumn,
+)
 from rich.table import Table
 
 from core.pipeline import AuditPipeline, PipelineContext
@@ -29,7 +36,7 @@ from core.processors import (
     TransformationStage,
     EnrichmentStage,
     StorageStage,
-    PermissionAnalysisStage
+    PermissionAnalysisStage,
 )
 from core.pipeline_metrics import PipelineMetrics
 from database.repository import DatabaseRepository
@@ -46,19 +53,48 @@ output = RichOutput()
 
 
 @click.command()
-@click.option('--config', default='config/config.json', help='Path to configuration file.')
-@click.option('--sites', help='Comma-separated list of specific site URLs to audit.')
-@click.option('--dry-run', is_flag=True, help='Show what would be done without making API calls.')
-@click.option('-v', '--verbose', count=True, help='Increase verbosity level (-v, -vv, -vvv).')
-@click.option('--resume', help='Resume a previous run by providing its run ID.')
+@click.option(
+    "--config", default="config/config.json", help="Path to configuration file."
+)
+@click.option("--sites", help="Comma-separated list of specific site URLs to audit.")
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be done without making API calls."
+)
+@click.option(
+    "-v", "--verbose", count=True, help="Increase verbosity level (-v, -vv, -vvv)."
+)
+@click.option("--resume", help="Resume a previous run by providing its run ID.")
 # Permissions are always analyzed for comprehensive auditing
-@click.option('--active-only', is_flag=True, help='Only scan active SharePoint sites (exclude inactive/archived sites).')
-@click.option('--output-format', type=click.Choice(['table', 'json', 'csv']), default='table',
-              help='Format for summary output.')
-@click.option('--batch-size', type=int, default=100, help='Batch size for processing items.')
-@click.option('--max-concurrent', type=int, default=50, help='Maximum concurrent operations.')
+@click.option(
+    "--active-only",
+    is_flag=True,
+    help="Only scan active SharePoint sites (exclude inactive/archived sites).",
+)
+@click.option(
+    "--output-format",
+    type=click.Choice(["table", "json", "csv"]),
+    default="table",
+    help="Format for summary output.",
+)
+@click.option(
+    "--batch-size", type=int, default=100, help="Batch size for processing items."
+)
+@click.option(
+    "--max-concurrent", type=int, default=50, help="Maximum concurrent operations."
+)
 @click.pass_context
-def audit(ctx, config, sites, dry_run, verbose, resume, active_only, output_format, batch_size, max_concurrent):
+def audit(
+    ctx,
+    config,
+    sites,
+    dry_run,
+    verbose,
+    resume,
+    active_only,
+    output_format,
+    batch_size,
+    max_concurrent,
+):
     """Run a comprehensive SharePoint audit.
 
     This command discovers and audits all SharePoint sites, libraries, folders,
@@ -72,10 +108,10 @@ def audit(ctx, config, sites, dry_run, verbose, resume, active_only, output_form
 
     # Parse CLI arguments
     cli_args = {
-        'target_sites': sites.split(',') if sites else None,
-        'batch_size': batch_size,
-        'max_concurrent': max_concurrent,
-        'active_only': active_only
+        "target_sites": sites.split(",") if sites else None,
+        "batch_size": batch_size,
+        "max_concurrent": max_concurrent,
+        "active_only": active_only,
     }
 
     try:
@@ -108,11 +144,19 @@ def audit(ctx, config, sites, dry_run, verbose, resume, active_only, output_form
         ctx.exit(1)
 
 
-async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
-                    active_only: bool, output_format: str):
+async def _run_audit(
+    ctx,
+    config: Dict[str, Any],
+    resume_id: Optional[str],
+    active_only: bool,
+    output_format: str,
+):
     """Run the actual audit pipeline."""
     # Generate or use existing run ID
-    run_id = resume_id or f"audit_run_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    run_id = (
+        resume_id
+        or f"audit_run_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    )
 
     if resume_id:
         output.info(f"Resuming audit run: {run_id}")
@@ -123,30 +167,32 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
     output.info("Initializing audit components...")
 
     # Create database repository
-    db_path = config.get('db', {}).get('path', 'audit.db')
+    db_path = config.get("db", {}).get("path", "audit.db")
     db_repo = DatabaseRepository(db_path)
     await db_repo.initialize_database()
 
     # Create authentication manager
-    auth_dict = config['auth']
+    auth_dict = config["auth"]
     auth_config = AuthConfig(
-        tenant_id=auth_dict['tenant_id'],
-        client_id=auth_dict['client_id'],
-        certificate_path=auth_dict['certificate_path'],
-        certificate_thumbprint=auth_dict.get('certificate_thumbprint'),
-        certificate_password=auth_dict.get('certificate_password')
+        tenant_id=auth_dict["tenant_id"],
+        client_id=auth_dict["client_id"],
+        certificate_path=auth_dict["certificate_path"],
+        certificate_thumbprint=auth_dict.get("certificate_thumbprint"),
+        certificate_password=auth_dict.get("certificate_password"),
     )
     auth_manager = AuthenticationManager(auth_config)
 
     # Create API clients
     rate_limiter = RateLimiter()
-    retry_strategy = RetryStrategy(RetryConfig(
-        max_attempts=3,
-        base_delay=0.5,
-        max_delay=30,
-        circuit_breaker_threshold=5,
-        circuit_breaker_timeout=60
-    ))
+    retry_strategy = RetryStrategy(
+        RetryConfig(
+            max_attempts=3,
+            base_delay=0.5,
+            max_delay=30,
+            circuit_breaker_threshold=5,
+            circuit_breaker_timeout=60,
+        )
+    )
 
     graph_client = GraphAPIClient(auth_manager, retry_strategy, rate_limiter)
     sp_client = SharePointAPIClient(auth_manager, retry_strategy, rate_limiter)
@@ -160,9 +206,9 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
         sp_client,
         db_repo,
         checkpoint_manager,
-        max_concurrent_sites=config.get('max_concurrent', 50),
-        max_concurrent_operations=config.get('max_concurrent', 50),
-        active_only=active_only
+        max_concurrent_sites=config.get("max_concurrent", 50),
+        max_concurrent_operations=config.get("max_concurrent", 50),
+        active_only=active_only,
     )
 
     # Create pipeline context
@@ -171,8 +217,12 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
         config=config,
         metrics=PipelineMetrics(),
         checkpoint_manager=checkpoint_manager,
-        db_repository=db_repo
+        db_repository=db_repo,
     )
+
+    # Pass target sites to the pipeline context if provided
+    if config.get("target_sites"):
+        context.sites_to_process = config["target_sites"]
 
     # Create audit run record
     if not resume_id:
@@ -195,7 +245,7 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
         graph_client=graph_client,
         sp_client=sp_client,
         db_repo=db_repo,
-        cache_manager=cache_manager
+        cache_manager=cache_manager,
     )
     pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
 
@@ -209,7 +259,7 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
         BarColumn(),
         TaskProgressColumn(),
         TimeRemainingColumn(),
-        console=console
+        console=console,
     ) as progress:
         # Add main task
         main_task = progress.add_task("Auditing SharePoint", total=None)
@@ -227,13 +277,17 @@ async def _run_audit(ctx, config: Dict[str, Any], resume_id: Optional[str],
             await result.db_repository.update_audit_run(
                 result.run_id,
                 {
-                    "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "completed_at": datetime.datetime.now(
+                        datetime.timezone.utc
+                    ).isoformat(),
                     "status": status,
                     "total_sites_processed": len(result.sites),
                     "total_items_processed": result.total_items,
                     "total_errors": len(result.errors),
-                    "error_details": "\n".join(result.errors[:10]) if result.errors else None
-                }
+                    "error_details": (
+                        "\n".join(result.errors[:10]) if result.errors else None
+                    ),
+                },
             )
 
             if result.errors:
@@ -257,14 +311,21 @@ def _show_dry_run_plan(config: Dict[str, Any]):
     table.add_column("Action", style="white")
 
     table.add_row("Authentication", f"Using tenant: {config['auth']['tenant_id']}")
-    table.add_row("Database", f"Using database: {config.get('db', {}).get('path', 'audit.db')}")
+    table.add_row(
+        "Database", f"Using database: {config.get('db', {}).get('path', 'audit.db')}"
+    )
 
-    if config.get('target_sites'):
-        table.add_row("Sites", f"Auditing specific sites: {', '.join(config['target_sites'])}")
+    if config.get("target_sites"):
+        table.add_row(
+            "Sites", f"Auditing specific sites: {', '.join(config['target_sites'])}"
+        )
     else:
         table.add_row("Sites", "Discovering all sites in tenant")
 
-    table.add_row("Stages", "Discovery → Validation → Transformation → Enrichment → Storage → Permissions")
+    table.add_row(
+        "Stages",
+        "Discovery → Validation → Transformation → Enrichment → Storage → Permissions",
+    )
     table.add_row("Permissions", "Always analyzed (comprehensive auditing)")
 
     console.print(table)
@@ -274,13 +335,14 @@ def _show_audit_results(result: PipelineContext, output_format: str):
     """Display audit results in the requested format."""
     if output_format == "json":
         import json
+
         summary = {
             "run_id": result.run_id,
             "duration_seconds": result.metrics.total_duration,
             "sites_processed": len(result.sites),
             "total_items": result.total_items,
             "errors": len(result.errors),
-            "metrics": result.metrics.custom_metrics
+            "metrics": result.metrics.custom_metrics,
         }
         console.print_json(json.dumps(summary, indent=2))
 
@@ -294,7 +356,9 @@ def _show_audit_results(result: PipelineContext, output_format: str):
         console.print(f"errors,{len(result.errors)}")
 
     else:  # table format
-        table = Table(title="Audit Summary", show_header=True, header_style="bold green")
+        table = Table(
+            title="Audit Summary", show_header=True, header_style="bold green"
+        )
         table.add_column("Metric", style="cyan", no_wrap=True)
         table.add_column("Value", style="white")
 
@@ -306,19 +370,27 @@ def _show_audit_results(result: PipelineContext, output_format: str):
 
         if result.metrics.custom_metrics:
             if "total_files" in result.metrics.custom_metrics:
-                table.add_row("Total Files", f"{result.metrics.custom_metrics['total_files']:,}")
+                table.add_row(
+                    "Total Files", f"{result.metrics.custom_metrics['total_files']:,}"
+                )
             if "total_storage_gb" in result.metrics.custom_metrics:
-                table.add_row("Total Storage", f"{result.metrics.custom_metrics['total_storage_gb']:.2f} GB")
+                table.add_row(
+                    "Total Storage",
+                    f"{result.metrics.custom_metrics['total_storage_gb']:.2f} GB",
+                )
             if "average_file_size_mb" in result.metrics.custom_metrics:
-                table.add_row("Average File Size", f"{result.metrics.custom_metrics['average_file_size_mb']:.2f} MB")
+                table.add_row(
+                    "Average File Size",
+                    f"{result.metrics.custom_metrics['average_file_size_mb']:.2f} MB",
+                )
 
         console.print(table)
 
 
 @click.command()
-@click.option('--db-path', required=True, help='Path to the audit database file.')
-@click.option('--port', default=9999, help='Port to run the dashboard on.')
-@click.option('--no-browser', is_flag=True, help='Do not open browser automatically.')
+@click.option("--db-path", required=True, help="Path to the audit database file.")
+@click.option("--port", default=9999, help="Port to run the dashboard on.")
+@click.option("--no-browser", is_flag=True, help="Do not open browser automatically.")
 @click.pass_context
 def dashboard(ctx, db_path, port, no_browser):
     """Launch the Streamlit dashboard for viewing audit results.
@@ -341,10 +413,16 @@ def dashboard(ctx, db_path, port, no_browser):
 
     # Build streamlit command
     command = [
-        sys.executable, "-m", "streamlit", "run",
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
         str(streamlit_app_path),
-        "--server.port", str(port),
-        "--", "--db-path", db_path
+        "--server.port",
+        str(port),
+        "--",
+        "--db-path",
+        db_path,
     ]
 
     if no_browser:
@@ -365,9 +443,9 @@ def dashboard(ctx, db_path, port, no_browser):
 
 
 @click.command()
-@click.option('--db-path', required=True, help='Path to the audit database to backup.')
-@click.option('--output', required=True, help='Path for the backup file.')
-@click.option('--compress', is_flag=True, help='Compress the backup file.')
+@click.option("--db-path", required=True, help="Path to the audit database to backup.")
+@click.option("--output", required=True, help="Path for the backup file.")
+@click.option("--compress", is_flag=True, help="Compress the backup file.")
 @click.pass_context
 def backup(ctx, db_path, output, compress):
     """Create a backup of the audit database.
@@ -390,14 +468,15 @@ def backup(ctx, db_path, output, compress):
                 import shutil
 
                 # Create compressed backup
-                with open(db_path, 'rb') as f_in:
-                    with gzip.open(f"{output}.gz", 'wb') as f_out:
+                with open(db_path, "rb") as f_in:
+                    with gzip.open(f"{output}.gz", "wb") as f_out:
                         shutil.copyfileobj(f_in, f_out)
 
                 output_handler.success(f"Backup created: {output}.gz")
             else:
                 # Simple file copy
                 import shutil
+
                 shutil.copy2(db_path, output)
                 output_handler.success(f"Backup created: {output}")
 
@@ -407,9 +486,11 @@ def backup(ctx, db_path, output, compress):
 
 
 @click.command()
-@click.option('--backup-path', required=True, help='Path to the backup file.')
-@click.option('--db-path', required=True, help='Path where database should be restored.')
-@click.option('--force', is_flag=True, help='Overwrite existing database.')
+@click.option("--backup-path", required=True, help="Path to the backup file.")
+@click.option(
+    "--db-path", required=True, help="Path where database should be restored."
+)
+@click.option("--force", is_flag=True, help="Overwrite existing database.")
 @click.pass_context
 def restore(ctx, backup_path, db_path, force):
     """Restore an audit database from a backup.
@@ -432,17 +513,18 @@ def restore(ctx, backup_path, db_path, force):
 
     try:
         with output.status("Restoring backup..."):
-            if backup_path.endswith('.gz'):
+            if backup_path.endswith(".gz"):
                 import gzip
                 import shutil
 
                 # Decompress backup
-                with gzip.open(backup_path, 'rb') as f_in:
-                    with open(db_path, 'wb') as f_out:
+                with gzip.open(backup_path, "rb") as f_in:
+                    with open(db_path, "wb") as f_out:
                         shutil.copyfileobj(f_in, f_out)
             else:
                 # Simple file copy
                 import shutil
+
                 shutil.copy2(backup_path, db_path)
 
         output.success(f"Database restored: {db_path}")
@@ -453,10 +535,12 @@ def restore(ctx, backup_path, db_path, force):
 
 
 @click.command()
-@click.option('--config', default='config/config.json', help='Path to configuration file.')
-@click.option('--check-auth', is_flag=True, help='Test authentication.')
-@click.option('--check-api', is_flag=True, help='Test API connectivity.')
-@click.option('--check-db', help='Test database connectivity (provide path).')
+@click.option(
+    "--config", default="config/config.json", help="Path to configuration file."
+)
+@click.option("--check-auth", is_flag=True, help="Test authentication.")
+@click.option("--check-api", is_flag=True, help="Test API connectivity.")
+@click.option("--check-db", help="Test database connectivity (provide path).")
 @click.pass_context
 def health(ctx, config, check_auth, check_api, check_db):
     """Check system health and connectivity.
@@ -474,6 +558,7 @@ def health(ctx, config, check_auth, check_api, check_db):
         try:
             with output.status("Loading configuration..."):
                 from utils.config_parser import load_config
+
                 app_config = load_config(config)
             output.success("Configuration loaded")
         except Exception as e:
@@ -496,12 +581,15 @@ def health(ctx, config, check_auth, check_api, check_db):
     if check_api and all_checks_passed:
         try:
             with output.status("Testing API connectivity..."):
+
                 async def test_api():
                     auth_manager = AuthenticationManager(app_config.auth)
                     rate_limiter = RateLimiter()
                     retry_strategy = RetryStrategy(RetryConfig())
 
-                    graph_client = GraphAPIClient(auth_manager, retry_strategy, rate_limiter)
+                    graph_client = GraphAPIClient(
+                        auth_manager, retry_strategy, rate_limiter
+                    )
                     # Try to get tenant info
                     await graph_client.get_tenant_info()
 
@@ -515,6 +603,7 @@ def health(ctx, config, check_auth, check_api, check_db):
     if check_db:
         try:
             with output.status("Testing database connectivity..."):
+
                 async def test_db():
                     db_repo = DatabaseRepository(check_db)
                     await db_repo.initialize_database()
