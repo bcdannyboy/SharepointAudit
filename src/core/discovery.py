@@ -30,7 +30,7 @@ class DiscoveryModule(QueueBasedDiscovery):
         db_repo: DatabaseRepository,
         cache: Optional[CacheManager] = None,
         checkpoints: Optional[CheckpointManager] = None,
-        max_concurrent_operations: int = 50
+        max_concurrent_operations: int = 50,
     ):
         self.graph_client = graph_client
         self.sp_client = sp_client
@@ -44,16 +44,13 @@ class DiscoveryModule(QueueBasedDiscovery):
         self.operation_semaphore = asyncio.Semaphore(max_concurrent_operations)
 
         # Discovery state
-        self.discovered_counts = {
-            "sites": 0,
-            "libraries": 0,
-            "folders": 0,
-            "files": 0
-        }
+        self.discovered_counts = {"sites": 0, "libraries": 0, "folders": 0, "files": 0}
         self.processed_sites = 0
         self.sites_with_errors: Set[str] = set()
 
-    async def run_discovery(self, run_id: str, sites_to_process: Optional[List[str]] = None) -> Dict[str, Any]:
+    async def run_discovery(
+        self, run_id: str, sites_to_process: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """Run the complete discovery process."""
         start_time = time.time()
         logger.info(f"Starting discovery run {run_id}")
@@ -68,14 +65,20 @@ class DiscoveryModule(QueueBasedDiscovery):
                 # Filter to specific sites if requested
                 filtered_sites = []
                 for site in sites:
-                    site_url = site.get('webUrl', '') if isinstance(site, dict) else getattr(site, 'webUrl', '')
+                    site_url = (
+                        site.get("webUrl", "")
+                        if isinstance(site, dict)
+                        else getattr(site, "webUrl", "")
+                    )
                     for filter_url in sites_to_process:
                         # Check if the filter URL is contained in the site URL
                         if filter_url in site_url or site_url in filter_url:
                             filtered_sites.append(site)
                             break
                 sites = filtered_sites
-                logger.info(f"Filtered to {len(sites)} sites matching: {sites_to_process}")
+                logger.info(
+                    f"Filtered to {len(sites)} sites matching: {sites_to_process}"
+                )
 
             self.discovered_counts["sites"] = len(sites)
             logger.info(f"Discovered {len(sites)} sites to process")
@@ -100,7 +103,7 @@ class DiscoveryModule(QueueBasedDiscovery):
                 "elapsed_time": elapsed_time,
                 "discovered_counts": self.discovered_counts,
                 "processed_sites": self.processed_sites,
-                "sites_with_errors": list(self.sites_with_errors)
+                "sites_with_errors": list(self.sites_with_errors),
             }
 
         except Exception as e:
@@ -108,7 +111,7 @@ class DiscoveryModule(QueueBasedDiscovery):
             return {
                 "status": "failed",
                 "error": str(e),
-                "discovered_counts": self.discovered_counts
+                "discovered_counts": self.discovered_counts,
             }
 
     async def discover_all_sites(self, run_id: str) -> List[Dict[str, Any]]:
@@ -134,16 +137,16 @@ class DiscoveryModule(QueueBasedDiscovery):
             # Construct the appropriate URL
             if delta_token:
                 # Use delta query with token
-                url = f"https://graph.microsoft.com/v1.0/sites/delta?token={delta_token}"
+                url = (
+                    f"https://graph.microsoft.com/v1.0/sites/delta?token={delta_token}"
+                )
             else:
                 # Initial full sync
                 url = "https://graph.microsoft.com/v1.0/sites/delta"
 
             # Fetch sites with pagination
             while url:
-                data = await self._run_api_task(
-                    self.graph_client.get_with_retry(url)
-                )
+                data = await self._run_api_task(self.graph_client.get_with_retry(url))
 
                 # Process sites
                 for site_data in data.get("value", []):
@@ -159,7 +162,9 @@ class DiscoveryModule(QueueBasedDiscovery):
                     if "token=" in delta_link:
                         new_delta_token = delta_link.split("token=")[-1]
                         if self.cache:
-                            await self.cache.set("sites_delta_token", new_delta_token, ttl=86400)
+                            await self.cache.set(
+                                "sites_delta_token", new_delta_token, ttl=86400
+                            )
                         logger.info("Saved new delta token for incremental sync")
 
             # Save sites to database
@@ -186,13 +191,13 @@ class DiscoveryModule(QueueBasedDiscovery):
         """Discover content for a single site."""
         # Handle both dict and object access
         if isinstance(site, dict):
-            site_id = site.get('id', '')
-            site_title = site.get('displayName', site.get('name', 'Unknown'))
-            site_url = site.get('webUrl', site.get('url', ''))
+            site_id = site.get("id", "")
+            site_title = site.get("displayName", site.get("name", "Unknown"))
+            site_url = site.get("webUrl", site.get("url", ""))
         else:
-            site_id = getattr(site, 'id', '')
-            site_title = getattr(site, 'displayName', getattr(site, 'name', 'Unknown'))
-            site_url = getattr(site, 'webUrl', getattr(site, 'url', ''))
+            site_id = getattr(site, "id", "")
+            site_title = getattr(site, "displayName", getattr(site, "name", "Unknown"))
+            site_url = getattr(site, "webUrl", getattr(site, "url", ""))
 
         # Check if this site was already processed
         checkpoint_key = f"site_{site_id}_status"
@@ -205,7 +210,9 @@ class DiscoveryModule(QueueBasedDiscovery):
 
         try:
             # Pass site_url to all discovery methods
-            site_with_url = {**site, 'site_url': site_url} if isinstance(site, dict) else site
+            site_with_url = (
+                {**site, "site_url": site_url} if isinstance(site, dict) else site
+            )
 
             # Discover libraries, lists, and subsites in parallel
             tasks = [
@@ -214,7 +221,9 @@ class DiscoveryModule(QueueBasedDiscovery):
                 self._discover_subsites(run_id, site_with_url),
             ]
 
-            libraries, lists, subsites = await asyncio.gather(*tasks, return_exceptions=True)
+            libraries, lists, subsites = await asyncio.gather(
+                *tasks, return_exceptions=True
+            )
 
             # Discover folders and files within libraries
             if isinstance(libraries, list):
@@ -222,7 +231,7 @@ class DiscoveryModule(QueueBasedDiscovery):
                 for library in libraries:
                     if isinstance(library, dict):
                         # Add site_url to library
-                        library['site_url'] = site_url
+                        library["site_url"] = site_url
                         task = self._discover_library_contents(site_with_url, library)
                         library_tasks.append(task)
 
@@ -253,11 +262,13 @@ class DiscoveryModule(QueueBasedDiscovery):
         async with self.operation_semaphore:
             # Handle both dict and object access
             if isinstance(site, dict):
-                site_id = site.get('id')
-                site_url = site.get('site_url', site.get('webUrl', site.get('url', '')))
+                site_id = site.get("id")
+                site_url = site.get("site_url", site.get("webUrl", site.get("url", "")))
             else:
-                site_id = getattr(site, 'id', None)
-                site_url = getattr(site, 'site_url', getattr(site, 'webUrl', getattr(site, 'url', '')))
+                site_id = getattr(site, "id", None)
+                site_url = getattr(
+                    site, "site_url", getattr(site, "webUrl", getattr(site, "url", ""))
+                )
 
             if not site_id:
                 return []
@@ -270,9 +281,7 @@ class DiscoveryModule(QueueBasedDiscovery):
                         return cached
 
                 url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
-                data = await self._run_api_task(
-                    self.graph_client.get_with_retry(url)
-                )
+                data = await self._run_api_task(self.graph_client.get_with_retry(url))
                 libraries = data.get("value", [])
 
                 # Save libraries to database with site_url
@@ -293,7 +302,9 @@ class DiscoveryModule(QueueBasedDiscovery):
                     if records:
                         await self.db_repo.bulk_insert("libraries", records)
                         self.discovered_counts["libraries"] += len(records)
-                        logger.info(f"Discovered {len(records)} libraries in site (Total: {self.discovered_counts['libraries']})")
+                        logger.info(
+                            f"Discovered {len(records)} libraries in site (Total: {self.discovered_counts['libraries']})"
+                        )
 
                 if self.cache:
                     await self.cache.set(cache_key, libraries, ttl=3600)
@@ -304,28 +315,31 @@ class DiscoveryModule(QueueBasedDiscovery):
                 logger.error(f"Error discovering libraries for site {site_id}: {e}")
                 return []
 
-    async def _discover_library_contents(self, site: Dict[str, Any], library: Dict[str, Any]) -> None:
+    async def _discover_library_contents(
+        self, site: Dict[str, Any], library: Dict[str, Any]
+    ) -> None:
         """Discover folders and files within a library using queue-based approach."""
         await self._discover_library_contents_queue(site, library)
 
-    async def _discover_library_contents_queue(self, site: Dict[str, Any], library: Dict[str, Any]) -> None:
+    async def _discover_library_contents_queue(
+        self, site: Dict[str, Any], library: Dict[str, Any]
+    ) -> None:
         """Queue-based discovery implementation."""
-        library_id = library.get('library_id', library.get('id'))
-        library_name = library.get('name', 'Unknown')
-        site_id = site.get('site_id', site.get('id'))
-        site_url = site.get('site_url', site.get('webUrl', site.get('url', '')))
-        drive_id = library.get('drive_id', library.get('id'))
+        library_id = library.get("library_id", library.get("id"))
+        library_name = library.get("name", "Unknown")
+        site_id = site.get("site_id", site.get("id"))
+        site_url = site.get("site_url", site.get("webUrl", site.get("url", "")))
+        drive_id = library.get("drive_id", library.get("id"))
 
-        logger.info(f"[QUEUE] Starting queue-based discovery for library {library_name}")
+        logger.info(
+            f"[QUEUE] Starting queue-based discovery for library {library_name}"
+        )
 
         # Initialize queue with root folder
         folders_to_process = asyncio.Queue()
-        await folders_to_process.put({
-            'parent_id': None,
-            'path': '/',
-            'item_id': 'root',
-            'depth': 0
-        })
+        await folders_to_process.put(
+            {"parent_id": None, "path": "/", "item_id": "root", "depth": 0}
+        )
 
         # Batch collections
         folders_batch = []
@@ -336,20 +350,22 @@ class DiscoveryModule(QueueBasedDiscovery):
         while not folders_to_process.empty():
             try:
                 folder_info = await folders_to_process.get()
-                parent_id = folder_info['parent_id']
-                folder_path = folder_info['path']
-                folder_item_id = folder_info['item_id']
-                depth = folder_info['depth']
+                parent_id = folder_info["parent_id"]
+                folder_path = folder_info["path"]
+                folder_item_id = folder_info["item_id"]
+                depth = folder_info["depth"]
 
                 if depth > max_depth:
-                    logger.warning(f"Max depth {max_depth} reached at {folder_path}, skipping deeper folders")
+                    logger.warning(
+                        f"Max depth {max_depth} reached at {folder_path}, skipping deeper folders"
+                    )
                     continue
 
                 # Acquire semaphore only for the API call
                 async with self.operation_semaphore:
                     try:
                         # Construct the URL
-                        if folder_item_id == 'root':
+                        if folder_item_id == "root":
                             url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root/children?$top=200"
                         else:
                             url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{folder_item_id}/children?$top=200"
@@ -367,29 +383,43 @@ class DiscoveryModule(QueueBasedDiscovery):
                             url = data.get("@odata.nextLink")
 
                         elapsed = time.time() - start_time
-                        logger.debug(f"[QUEUE] Fetched {len(items)} items from {folder_path} in {elapsed:.2f}s")
+                        logger.debug(
+                            f"[QUEUE] Fetched {len(items)} items from {folder_path} in {elapsed:.2f}s"
+                        )
 
                     except Exception as e:
-                        logger.error(f"[QUEUE] Error fetching items from {folder_path}: {e}")
+                        logger.error(
+                            f"[QUEUE] Error fetching items from {folder_path}: {e}"
+                        )
                         continue
 
                 # Process items outside the semaphore
                 for item in items:
                     if "folder" in item:  # It's a folder
-                        folder_record = self._folder_to_dict(item, library_id, site_id, site_url, folder_path)
+                        folder_record = self._folder_to_dict(
+                            item, library_id, site_id, site_url, folder_path
+                        )
                         if folder_record:
                             folders_batch.append(folder_record)
 
                             # Add to queue for processing
-                            child_path = f"{folder_path}/{item['name']}" if folder_path != "/" else f"/{item['name']}"
-                            await folders_to_process.put({
-                                'parent_id': folder_record['folder_id'],
-                                'path': child_path,
-                                'item_id': item['id'],
-                                'depth': depth + 1
-                            })
+                            child_path = (
+                                f"{folder_path}/{item['name']}"
+                                if folder_path != "/"
+                                else f"/{item['name']}"
+                            )
+                            await folders_to_process.put(
+                                {
+                                    "parent_id": folder_record["folder_id"],
+                                    "path": child_path,
+                                    "item_id": item["id"],
+                                    "depth": depth + 1,
+                                }
+                            )
                     else:  # It's a file
-                        file_record = self._file_to_dict(item, library_id, site_id, site_url, folder_path)
+                        file_record = self._file_to_dict(
+                            item, library_id, site_id, site_url, folder_path
+                        )
                         if file_record:
                             files_batch.append(file_record)
 
@@ -406,7 +436,9 @@ class DiscoveryModule(QueueBasedDiscovery):
 
                 # Log progress
                 if processed_count % 10 == 0:
-                    logger.debug(f"[QUEUE] Processed {processed_count} folders, queue size: {folders_to_process.qsize()}")
+                    logger.debug(
+                        f"[QUEUE] Processed {processed_count} folders, queue size: {folders_to_process.qsize()}"
+                    )
 
             except Exception as e:
                 logger.error(f"[QUEUE] Error in discovery loop: {e}")
@@ -423,52 +455,90 @@ class DiscoveryModule(QueueBasedDiscovery):
             f"{self.discovered_counts['folders']} folders, {self.discovered_counts['files']} files"
         )
 
-    def _folder_to_dict(self, folder: Dict[str, Any], library_id: str, site_id: str, site_url: str, parent_path: str) -> Optional[Dict[str, Any]]:
+    def _folder_to_dict(
+        self,
+        folder: Dict[str, Any],
+        library_id: str,
+        site_id: str,
+        site_url: str,
+        parent_path: str,
+    ) -> Optional[Dict[str, Any]]:
         """Convert API folder response to database format."""
         try:
-            folder_path = f"{parent_path}/{folder['name']}" if parent_path != "/" else f"/{folder['name']}"
+            folder_path = (
+                f"{parent_path}/{folder['name']}"
+                if parent_path != "/"
+                else f"/{folder['name']}"
+            )
 
             return {
-                'folder_id': folder['id'],
-                'library_id': library_id,
-                'site_id': site_id,
-                'site_url': site_url,
-                'name': folder['name'],
-                'server_relative_url': folder.get('webUrl', ''),
-                'created_at': folder.get('createdDateTime', datetime.now(timezone.utc).isoformat()),
-                'created_by': folder.get('createdBy', {}).get('user', {}).get('email', 'Unknown'),
-                'modified_at': folder.get('lastModifiedDateTime', datetime.now(timezone.utc).isoformat()),
-                'modified_by': folder.get('lastModifiedBy', {}).get('user', {}).get('email', 'Unknown'),
-                'item_count': folder.get('folder', {}).get('childCount', 0),
-                'is_root': parent_path == "/",
-                'has_unique_permissions': folder.get('hasUniquePermissions', False),
-                'path': folder_path
+                "folder_id": folder["id"],
+                "library_id": library_id,
+                "site_id": site_id,
+                "site_url": site_url,
+                "name": folder["name"],
+                "server_relative_url": folder.get("webUrl", ""),
+                "created_at": folder.get(
+                    "createdDateTime", datetime.now(timezone.utc).isoformat()
+                ),
+                "created_by": folder.get("createdBy", {})
+                .get("user", {})
+                .get("email", "Unknown"),
+                "modified_at": folder.get(
+                    "lastModifiedDateTime", datetime.now(timezone.utc).isoformat()
+                ),
+                "modified_by": folder.get("lastModifiedBy", {})
+                .get("user", {})
+                .get("email", "Unknown"),
+                "item_count": folder.get("folder", {}).get("childCount", 0),
+                "is_root": parent_path == "/",
+                "has_unique_permissions": folder.get("hasUniquePermissions", False),
+                "path": folder_path,
             }
         except Exception as e:
             logger.error(f"Error converting folder to dict: {e}")
             return None
 
-    def _file_to_dict(self, file: Dict[str, Any], library_id: str, site_id: str, site_url: str, folder_path: str) -> Optional[Dict[str, Any]]:
+    def _file_to_dict(
+        self,
+        file: Dict[str, Any],
+        library_id: str,
+        site_id: str,
+        site_url: str,
+        folder_path: str,
+    ) -> Optional[Dict[str, Any]]:
         """Convert API file response to database format."""
         try:
             return {
-                'file_id': file['id'],
-                'library_id': library_id,
-                'site_id': site_id,
-                'site_url': site_url,
-                'name': file['name'],
-                'server_relative_url': file.get('webUrl', ''),
-                'size_bytes': file.get('size', 0),
-                'created_at': file.get('createdDateTime', datetime.now(timezone.utc).isoformat()),
-                'created_by': file.get('createdBy', {}).get('user', {}).get('email', 'Unknown'),
-                'modified_at': file.get('lastModifiedDateTime', datetime.now(timezone.utc).isoformat()),
-                'modified_by': file.get('lastModifiedBy', {}).get('user', {}).get('email', 'Unknown'),
-                'version': file.get('file', {}).get('version', '1.0'),
-                'content_type': file.get('file', {}).get('mimeType', 'Unknown'),
-                'has_unique_permissions': file.get('hasUniquePermissions', False),
-                'is_checked_out': file.get('isCheckedOut', False),
-                'checked_out_by': file.get('checkedOutBy', {}).get('user', {}).get('email') if file.get('isCheckedOut') else None,
-                'folder_path': folder_path
+                "file_id": file["id"],
+                "library_id": library_id,
+                "site_id": site_id,
+                "site_url": site_url,
+                "name": file["name"],
+                "server_relative_url": file.get("webUrl", ""),
+                "size_bytes": file.get("size", 0),
+                "created_at": file.get(
+                    "createdDateTime", datetime.now(timezone.utc).isoformat()
+                ),
+                "created_by": file.get("createdBy", {})
+                .get("user", {})
+                .get("email", "Unknown"),
+                "modified_at": file.get(
+                    "lastModifiedDateTime", datetime.now(timezone.utc).isoformat()
+                ),
+                "modified_by": file.get("lastModifiedBy", {})
+                .get("user", {})
+                .get("email", "Unknown"),
+                "version": file.get("file", {}).get("version", "1.0"),
+                "content_type": file.get("file", {}).get("mimeType", "Unknown"),
+                "has_unique_permissions": file.get("hasUniquePermissions", False),
+                "is_checked_out": file.get("isCheckedOut", False),
+                "checked_out_by": (
+                    file.get("checkedOutBy", {}).get("user", {}).get("email")
+                    if file.get("isCheckedOut")
+                    else None
+                ),
+                "folder_path": folder_path,
             }
         except Exception as e:
             logger.error(f"Error converting file to dict: {e}")
@@ -482,7 +552,9 @@ class DiscoveryModule(QueueBasedDiscovery):
         try:
             await self.db_repo.bulk_insert("folders", folders)
             self.discovered_counts["folders"] += len(folders)
-            logger.debug(f"Saved {len(folders)} folders (Total: {self.discovered_counts['folders']})")
+            logger.debug(
+                f"Saved {len(folders)} folders (Total: {self.discovered_counts['folders']})"
+            )
         except Exception as e:
             logger.error(f"Error saving folders batch: {e}")
 
@@ -494,7 +566,9 @@ class DiscoveryModule(QueueBasedDiscovery):
         try:
             await self.db_repo.bulk_insert("files", files)
             self.discovered_counts["files"] += len(files)
-            logger.debug(f"Saved {len(files)} files (Total: {self.discovered_counts['files']})")
+            logger.debug(
+                f"Saved {len(files)} files (Total: {self.discovered_counts['files']})"
+            )
         except Exception as e:
             logger.error(f"Error saving files batch: {e}")
 
@@ -511,8 +585,8 @@ class DiscoveryModule(QueueBasedDiscovery):
     def _is_valid_site(self, site_data: Dict[str, Any]) -> bool:
         """Check if a site should be included in discovery."""
         # Filter out certain system sites or based on other criteria
-        site_url = site_data.get('webUrl', '')
-        if any(skip in site_url for skip in ['/personal/', '-my.sharepoint.com']):
+        site_url = site_data.get("webUrl", "")
+        if any(skip in site_url for skip in ["/personal/", "-my.sharepoint.com"]):
             return False
         return True
 
@@ -530,7 +604,7 @@ class DiscoveryModule(QueueBasedDiscovery):
             records.append(record)
 
         if records:
-            await self.db_repo.bulk_insert("sites", records)
+            await self.db_repo.bulk_upsert("sites", records, ["site_id"])
             logger.info(f"Saved {len(records)} sites to database")
 
     async def _run_api_task(self, coro):
