@@ -141,11 +141,8 @@ The tool provides a comprehensive CLI with multiple commands:
 
 #### 1. Run a Full Audit
 ```bash
-# Basic audit (discovers all sites)
+# Basic audit (discovers all sites, includes permissions)
 sharepoint-audit audit --config config/config.json
-
-# With permission analysis
-sharepoint-audit audit --config config/config.json --analyze-permissions
 
 # Verbose output with progress
 sharepoint-audit audit --config config/config.json --verbose

@@ -9,7 +9,7 @@ import threading
 import signal
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -168,7 +168,8 @@ class MockDiscoveryStage(PipelineStage):
 async def create_pipeline(config_path: str = "config/config.json",
                         run_id: Optional[str] = None,
                         dry_run: bool = False,
-                        active_only: bool = False) -> AuditPipeline:
+                        active_only: bool = False,
+                        sites_to_process: Optional[List[str]] = None) -> AuditPipeline:
     """Create and configure the audit pipeline."""
     # Load configuration
     logger.info(f"Loading configuration from {config_path}")
@@ -224,10 +225,9 @@ async def create_pipeline(config_path: str = "config/config.json",
         graph_client,
         sp_client,
         db_repo,
-        checkpoint_manager,
-        max_concurrent_sites=10,  # Reduced from 20
-        max_concurrent_operations=20,  # Reduced from 50 to prevent semaphore exhaustion
-        active_only=active_only
+        cache=None,
+        checkpoints=checkpoint_manager,
+        max_concurrent_operations=20  # Reduced from 50 to prevent semaphore exhaustion
     )
 
     # Create pipeline context
@@ -241,6 +241,10 @@ async def create_pipeline(config_path: str = "config/config.json",
         checkpoint_manager=checkpoint_manager,
         db_repository=db_repo
     )
+
+    # Add sites to filter if provided
+    if sites_to_process:
+        context.sites_to_process = sites_to_process
 
     # Create audit run record in database
     await db_repo.create_audit_run(run_id)
@@ -273,7 +277,7 @@ async def create_pipeline(config_path: str = "config/config.json",
         graph_client=graph_client,
         sp_client=sp_client,
         db_repo=db_repo,
-        cache_manager=cache_manager
+        cache=cache_manager
     )
 
     pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
@@ -360,6 +364,10 @@ async def main():
         "--resume",
         help="Resume a previous run by providing its run ID"
     )
+    parser.add_argument(
+        "--sites",
+        help="Comma-separated list of specific site URLs to audit"
+    )
 
     args = parser.parse_args()
 
@@ -367,13 +375,20 @@ async def main():
         # Use resume ID if provided
         run_id = args.resume or args.run_id
 
+        # Parse sites if provided
+        sites_to_process = None
+        if args.sites:
+            sites_to_process = [s.strip() for s in args.sites.split(',')]
+            logger.info(f"Will filter to specific sites: {sites_to_process}")
+
         # Create and configure pipeline
         logger.info("Creating audit pipeline...")
         pipeline = await create_pipeline(
             args.config,
             run_id,
             dry_run=args.dry_run,
-            active_only=args.active_only
+            active_only=args.active_only,
+            sites_to_process=sites_to_process
         )
 
         if args.resume:
@@ -394,12 +409,11 @@ async def main():
         await result.db_repository.update_audit_run(
             result.run_id,
             {
-                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "end_time": datetime.now(timezone.utc).isoformat(),
                 "status": status,
-                "total_sites_processed": len(result.sites),
-                "total_items_processed": result.total_items,
-                "total_errors": len(result.errors),
-                "error_details": "\n".join(result.errors[:10]) if result.errors else None
+                "total_sites": len(result.sites),
+                "total_files": getattr(result, 'total_files', 0),
+                "error_count": len(result.errors)
             }
         )
 

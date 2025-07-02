@@ -16,14 +16,14 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 from rich.table import Table
 
-from ..core.pipeline import AuditPipeline, PipelineContext
-from ..api.auth_manager import AuthenticationManager
-from ..api.graph_client import GraphAPIClient
-from ..api.sharepoint_client import SharePointAPIClient
-from ..cache.cache_manager import CacheManager
-from ..core.discovery import DiscoveryModule
-from ..core.permissions import PermissionAnalyzer
-from ..core.processors import (
+from core.pipeline import AuditPipeline, PipelineContext
+from api.auth_manager import AuthenticationManager
+from api.graph_client import GraphAPIClient
+from api.sharepoint_client import SharePointAPIClient
+from cache.cache_manager import CacheManager
+from core.discovery import DiscoveryModule
+from core.permissions import PermissionAnalyzer
+from core.processors import (
     DiscoveryStage,
     ValidationStage,
     TransformationStage,
@@ -31,14 +31,14 @@ from ..core.processors import (
     StorageStage,
     PermissionAnalysisStage
 )
-from ..core.pipeline_metrics import PipelineMetrics
-from ..database.repository import DatabaseRepository
-from ..utils.checkpoint_manager import CheckpointManager
-from ..utils.rate_limiter import RateLimiter
-from ..utils.retry_handler import RetryStrategy, RetryConfig
-from .config_parser import load_and_merge_config
-from .output import RichOutput, setup_logging
-from ..utils.config_parser import AuthConfig
+from core.pipeline_metrics import PipelineMetrics
+from database.repository import DatabaseRepository
+from utils.checkpoint_manager import CheckpointManager
+from utils.rate_limiter import RateLimiter
+from utils.retry_handler import RetryStrategy, RetryConfig
+from cli.config_parser import load_and_merge_config
+from cli.output import RichOutput, setup_logging
+from utils.config_parser import AuthConfig
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -264,10 +264,8 @@ def _show_dry_run_plan(config: Dict[str, Any]):
     else:
         table.add_row("Sites", "Discovering all sites in tenant")
 
-    table.add_row("Stages", "Discovery → Validation → Transformation → Enrichment → Storage")
-
-    if config.get('analyze_permissions'):
-        table.add_row("Permissions", "Permission analysis enabled")
+    table.add_row("Stages", "Discovery → Validation → Transformation → Enrichment → Storage → Permissions")
+    table.add_row("Permissions", "Always analyzed (comprehensive auditing)")
 
     console.print(table)
 
@@ -475,7 +473,7 @@ def health(ctx, config, check_auth, check_api, check_db):
     if check_auth or check_api:
         try:
             with output.status("Loading configuration..."):
-                from ..utils.config_parser import load_config
+                from utils.config_parser import load_config
                 app_config = load_config(config)
             output.success("Configuration loaded")
         except Exception as e:

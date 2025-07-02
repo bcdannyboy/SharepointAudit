@@ -2,7 +2,50 @@
 
 import click
 
-from .commands import audit, dashboard, backup, restore, health
+# Import dashboard separately to avoid import issues
+from .dashboard_command import dashboard
+
+# Import commands
+try:
+    from .simple_audit import audit as audit_command
+    audit = audit_command
+except ImportError as e1:
+    # Create fallback audit command
+    @click.command()
+    @click.pass_context
+    def audit(ctx):
+        """Run a comprehensive SharePoint audit."""
+        click.echo("Error: Unable to load audit command due to import issues.")
+        click.echo(f"Details: {e1}")
+        ctx.exit(1)
+
+try:
+    from .commands import backup, restore, health
+except ImportError as e:
+    # Create placeholder commands if imports fail
+    @click.command()
+    @click.pass_context
+    def backup(ctx):
+        """Create a backup of the audit database."""
+        click.echo("Error: Unable to load backup command due to import issues.")
+        click.echo(f"Details: {e}")
+        ctx.exit(1)
+
+    @click.command()
+    @click.pass_context
+    def restore(ctx):
+        """Restore an audit database from a backup."""
+        click.echo("Error: Unable to load restore command due to import issues.")
+        click.echo(f"Details: {e}")
+        ctx.exit(1)
+
+    @click.command()
+    @click.pass_context
+    def health(ctx):
+        """Check system health and connectivity."""
+        click.echo("Error: Unable to load health command due to import issues.")
+        click.echo(f"Details: {e}")
+        ctx.exit(1)
 
 
 @click.group()

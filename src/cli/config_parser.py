@@ -102,10 +102,8 @@ def merge_cli_args(config: Dict[str, Any], cli_args: Dict[str, Any]) -> Dict[str
         merged['max_concurrent'] = cli_args['max_concurrent']
         logger.debug(f"Setting max_concurrent from CLI: {cli_args['max_concurrent']}")
 
-    # Add analyze permissions flag
-    if cli_args.get('analyze_permissions') is not None:
-        merged['analyze_permissions'] = cli_args['analyze_permissions']
-        logger.debug(f"Setting analyze_permissions from CLI: {cli_args['analyze_permissions']}")
+    # Permissions are now always analyzed for comprehensive auditing
+    # The analyze_permissions flag has been deprecated
 
     # Override database path if provided
     if cli_args.get('db_path') is not None:
@@ -190,8 +188,7 @@ def get_config_template() -> Dict[str, Any]:
         },
         "target_sites": None,  # Optional: ["https://tenant.sharepoint.com/sites/site1"]
         "batch_size": 100,
-        "max_concurrent": 50,
-        "analyze_permissions": False
+        "max_concurrent": 50
     }
 
 

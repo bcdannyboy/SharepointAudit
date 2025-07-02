@@ -27,8 +27,13 @@ class DiscoveryStage(PipelineStage):
         self.logger.info("Starting discovery stage")
 
         try:
+            # Get sites to process from context if provided
+            sites_to_process = getattr(context, 'sites_to_process', None)
+            if sites_to_process:
+                self.logger.info(f"Filtering to specific sites: {sites_to_process}")
+
             # Run discovery
-            await self.discovery_module.run_discovery(context.run_id)
+            await self.discovery_module.run_discovery(context.run_id, sites_to_process)
 
             # Fetch discovered data from database for pipeline processing
             if context.db_repository:

@@ -457,11 +457,10 @@ async def test_phase5_end_to_end():
     # This test verifies the complete flow from discovery to permission storage
     from scripts.run_pipeline import create_pipeline
 
-    # Create pipeline with permission analysis
+    # Create pipeline (permissions are always analyzed)
     pipeline = await create_pipeline(
         config_path="config/config.json",
-        dry_run=True,
-        analyze_permissions=True
+        dry_run=True
     )
 
     # Run the pipeline
