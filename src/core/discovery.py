@@ -62,7 +62,12 @@ class DiscoveryModule(QueueBasedDiscovery):
             sites = await self.discover_all_sites(run_id)
 
             if sites_to_process:
-                # Filter to specific sites if requested
+                # Filter to specific sites if requested using exact matching
+                def _normalize(url: str) -> str:
+                    return url.rstrip("/").lower()
+
+                normalized_filters = {_normalize(u) for u in sites_to_process}
+
                 filtered_sites = []
                 for site in sites:
                     site_url = (
@@ -70,11 +75,9 @@ class DiscoveryModule(QueueBasedDiscovery):
                         if isinstance(site, dict)
                         else getattr(site, "webUrl", "")
                     )
-                    for filter_url in sites_to_process:
-                        # Check if the filter URL is contained in the site URL
-                        if filter_url in site_url or site_url in filter_url:
-                            filtered_sites.append(site)
-                            break
+                    if _normalize(site_url) in normalized_filters:
+                        filtered_sites.append(site)
+
                 sites = filtered_sites
                 logger.info(
                     f"Filtered to {len(sites)} sites matching: {sites_to_process}"

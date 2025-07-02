@@ -23,14 +23,14 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from core.pipeline import AuditPipeline, PipelineContext
-from api.auth_manager import AuthenticationManager
-from api.graph_client import GraphAPIClient
-from api.sharepoint_client import SharePointAPIClient
-from cache.cache_manager import CacheManager
-from core.discovery import DiscoveryModule
-from core.permissions import PermissionAnalyzer
-from core.processors import (
+from src.core.pipeline import AuditPipeline, PipelineContext
+from src.api.auth_manager import AuthenticationManager
+from src.api.graph_client import GraphAPIClient
+from src.api.sharepoint_client import SharePointAPIClient
+from src.cache.cache_manager import CacheManager
+from src.core.discovery import DiscoveryModule
+from src.core.permissions import PermissionAnalyzer
+from src.core.processors import (
     DiscoveryStage,
     ValidationStage,
     TransformationStage,
@@ -38,14 +38,14 @@ from core.processors import (
     StorageStage,
     PermissionAnalysisStage,
 )
-from core.pipeline_metrics import PipelineMetrics
-from database.repository import DatabaseRepository
-from utils.checkpoint_manager import CheckpointManager
-from utils.rate_limiter import RateLimiter
-from utils.retry_handler import RetryStrategy, RetryConfig
-from cli.config_parser import load_and_merge_config
-from cli.output import RichOutput, setup_logging
-from utils.config_parser import AuthConfig
+from src.core.pipeline_metrics import PipelineMetrics
+from src.database.repository import DatabaseRepository
+from src.utils.checkpoint_manager import CheckpointManager
+from src.utils.rate_limiter import RateLimiter
+from src.utils.retry_handler import RetryStrategy, RetryConfig
+from src.cli.config_parser import load_and_merge_config
+from src.cli.output import RichOutput, setup_logging
+from src.utils.config_parser import AuthConfig
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -117,7 +117,7 @@ def audit(
     try:
         # Load and merge configuration
         with output.status("Loading configuration..."):
-            final_config = load_and_merge_config(config_path=config, cli_args=cli_args)
+            final_config = load_and_merge_config(config, cli_args=cli_args)
 
         output.success("Configuration loaded successfully")
 

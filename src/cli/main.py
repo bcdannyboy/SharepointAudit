@@ -7,9 +7,15 @@ from .dashboard_command import dashboard
 
 # Import commands
 try:
-    from .simple_audit import audit as audit_command
+    from .commands import audit as audit_command, backup, restore, health
+
     audit = audit_command
-except ImportError as e1:
+except Exception as e1:
+    # Fallback to simple audit implementation if full commands fail
+    from .simple_audit import audit as audit_command
+
+    audit = audit_command
+
     # Create fallback audit command
     @click.command()
     @click.pass_context
@@ -19,14 +25,14 @@ except ImportError as e1:
         click.echo(f"Details: {e1}")
         ctx.exit(1)
 
+
 try:
     from .commands import backup, restore, health
-except ImportError as e:
-    # Create placeholder commands if imports fail
+except Exception as e:
+
     @click.command()
     @click.pass_context
     def backup(ctx):
-        """Create a backup of the audit database."""
         click.echo("Error: Unable to load backup command due to import issues.")
         click.echo(f"Details: {e}")
         ctx.exit(1)
@@ -34,7 +40,6 @@ except ImportError as e:
     @click.command()
     @click.pass_context
     def restore(ctx):
-        """Restore an audit database from a backup."""
         click.echo("Error: Unable to load restore command due to import issues.")
         click.echo(f"Details: {e}")
         ctx.exit(1)
@@ -42,7 +47,6 @@ except ImportError as e:
     @click.command()
     @click.pass_context
     def health(ctx):
-        """Check system health and connectivity."""
         click.echo("Error: Unable to load health command due to import issues.")
         click.echo(f"Details: {e}")
         ctx.exit(1)

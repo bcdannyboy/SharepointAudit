@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 class PrincipalType(Enum):
     """Types of security principals in SharePoint."""
+
     USER = "user"
     GROUP = "group"
     APPLICATION = "application"
@@ -30,6 +31,7 @@ class PrincipalType(Enum):
 
 class PermissionLevel(Enum):
     """Standard SharePoint permission levels."""
+
     FULL_CONTROL = "Full Control"
     DESIGN = "Design"
     EDIT = "Edit"
@@ -43,6 +45,7 @@ class PermissionLevel(Enum):
 @dataclass
 class PermissionEntry:
     """Represents a single permission entry."""
+
     principal_id: str
     principal_name: str
     principal_type: PrincipalType
@@ -58,6 +61,7 @@ class PermissionEntry:
 @dataclass
 class PermissionSet:
     """Collection of permissions for a SharePoint item."""
+
     object_type: str
     object_id: str
     object_path: str
@@ -80,6 +84,7 @@ class PermissionSet:
 @dataclass
 class GroupMembership:
     """Represents expanded group membership."""
+
     group_id: str
     group_name: str
     members: List[Dict[str, Any]]
@@ -96,13 +101,15 @@ class PermissionAnalyzer:
         graph_client: GraphAPIClient,
         sp_client: SharePointAPIClient,
         db_repo: DatabaseRepository,
-        cache: CacheManager,
-        max_concurrent_operations: int = 20
+        cache: CacheManager | None = None,
+        *,
+        cache_manager: CacheManager | None = None,
+        max_concurrent_operations: int = 20,
     ):
         self.graph_client = graph_client
         self.sp_client = sp_client
         self.db_repo = db_repo
-        self.cache = cache
+        self.cache = cache or cache_manager
 
         # Concurrency control
         self.concurrency_manager = ConcurrencyManager(max_concurrent_operations)
@@ -110,11 +117,7 @@ class PermissionAnalyzer:
 
         # Retry strategy with backoff
         self.retry_strategy = RetryStrategy(
-            RetryConfig(
-                max_attempts=3,
-                base_delay=1.0,
-                max_delay=30.0
-            )
+            RetryConfig(max_attempts=3, base_delay=1.0, max_delay=30.0)
         )
 
         # Statistics
@@ -124,13 +127,11 @@ class PermissionAnalyzer:
             "inherited_permissions": 0,
             "errors": 0,
             "external_shares": 0,
-            "anonymous_links": 0
+            "anonymous_links": 0,
         }
 
     async def analyze_item_permissions(
-        self,
-        item: Dict[str, Any],
-        item_type: str
+        self, item: Dict[str, Any], item_type: str
     ) -> PermissionSet:
         """Analyze permissions for a specific SharePoint item.
 
@@ -141,8 +142,19 @@ class PermissionAnalyzer:
         Returns:
             PermissionSet containing all resolved permissions
         """
-        item_id = item.get("id") or item.get("site_id") or item.get("library_id") or item.get("file_id")
-        item_path = item.get("url") or item.get("web_url") or item.get("server_relative_url") or item.get("path") or ""
+        item_id = (
+            item.get("id")
+            or item.get("site_id")
+            or item.get("library_id")
+            or item.get("file_id")
+        )
+        item_path = (
+            item.get("url")
+            or item.get("web_url")
+            or item.get("server_relative_url")
+            or item.get("path")
+            or ""
+        )
 
         # Check cache first
         cache_key = f"permissions:{item_type}:{item_id}"
@@ -157,7 +169,7 @@ class PermissionAnalyzer:
             object_type=item_type,
             object_id=item_id,
             object_path=item_path,
-            has_unique_permissions=has_unique
+            has_unique_permissions=has_unique,
         )
 
         if has_unique:
@@ -171,7 +183,9 @@ class PermissionAnalyzer:
 
         # If no permissions were found (e.g., API failure), add defaults
         if not permission_set.permissions:
-            logger.warning(f"No permissions found for {item_type} {item_id}, adding defaults")
+            logger.warning(
+                f"No permissions found for {item_type} {item_id}, adding defaults"
+            )
             self._add_default_permission(permission_set, item, item_type)
 
         # Check for external sharing
@@ -185,9 +199,7 @@ class PermissionAnalyzer:
         return permission_set
 
     async def _check_has_unique_permissions(
-        self,
-        item: Dict[str, Any],
-        item_type: str
+        self, item: Dict[str, Any], item_type: str
     ) -> bool:
         """Check if an item has unique role assignments."""
         # Sites always have unique permissions (they're the root)
@@ -196,9 +208,9 @@ class PermissionAnalyzer:
 
         # Check the has_unique_permissions flag first
         has_unique = (
-            item.get("has_unique_role_assignments", False) or
-            item.get("has_unique_permissions", False) or
-            item.get("HasUniqueRoleAssignments", False)
+            item.get("has_unique_role_assignments", False)
+            or item.get("has_unique_permissions", False)
+            or item.get("HasUniqueRoleAssignments", False)
         )
 
         # For items other than sites, we might need to check via API
@@ -214,21 +226,24 @@ class PermissionAnalyzer:
                         # unless the flag is already set
                         pass
                     elif item_type in ["folder", "file"]:
-                        item_id = item.get("id") or item.get("file_id") or item.get("folder_id")
+                        item_id = (
+                            item.get("id")
+                            or item.get("file_id")
+                            or item.get("folder_id")
+                        )
                         if library_id and item_id:
                             has_unique = await self.sp_client.check_unique_permissions(
                                 site_url, library_id, int(item_id)
                             )
             except Exception as e:
-                logger.debug(f"Could not check unique permissions for {item_type} {item.get('id')}: {e}")
+                logger.debug(
+                    f"Could not check unique permissions for {item_type} {item.get('id')}: {e}"
+                )
 
         return has_unique
 
     async def _get_unique_permissions(
-        self,
-        item: Dict[str, Any],
-        item_type: str,
-        permission_set: PermissionSet
+        self, item: Dict[str, Any], item_type: str, permission_set: PermissionSet
     ):
         """Fetches and processes unique role assignments for an item."""
         try:
@@ -238,21 +253,29 @@ class PermissionAnalyzer:
                 raise ValueError(f"No site URL found for {item_type}: {item}")
 
             # Get role assignments from SharePoint
-            logger.debug(f"Getting permissions for {item_type} with site_url: {site_url}")
+            logger.debug(
+                f"Getting permissions for {item_type} with site_url: {site_url}"
+            )
 
             if item_type == "site":
                 role_assignments = await self._run_api_task(
                     self.sp_client.get_site_permissions(site_url)
                 )
-                logger.debug(f"Site permissions response: {len(role_assignments)} role assignments")
+                logger.debug(
+                    f"Site permissions response: {len(role_assignments)} role assignments"
+                )
             elif item_type == "library":
                 library_id = item.get("library_id") or item.get("id")
                 if library_id:
-                    logger.debug(f"Getting library permissions for library_id: {library_id}")
+                    logger.debug(
+                        f"Getting library permissions for library_id: {library_id}"
+                    )
                     role_assignments = await self._run_api_task(
                         self.sp_client.get_library_permissions(site_url, library_id)
                     )
-                    logger.debug(f"Library permissions response: {len(role_assignments)} role assignments")
+                    logger.debug(
+                        f"Library permissions response: {len(role_assignments)} role assignments"
+                    )
                 else:
                     raise ValueError(f"Missing library_id for library: {item}")
             elif item_type in ["folder", "file"]:
@@ -262,14 +285,22 @@ class PermissionAnalyzer:
                     # Convert item_id to int if it's numeric
                     try:
                         item_id_int = int(item_id)
-                        logger.debug(f"Getting {item_type} permissions for library_id: {library_id}, item_id: {item_id_int}")
-                        role_assignments = await self._run_api_task(
-                            self.sp_client.get_item_permissions(site_url, library_id, item_id_int)
+                        logger.debug(
+                            f"Getting {item_type} permissions for library_id: {library_id}, item_id: {item_id_int}"
                         )
-                        logger.debug(f"{item_type} permissions response: {len(role_assignments)} role assignments")
+                        role_assignments = await self._run_api_task(
+                            self.sp_client.get_item_permissions(
+                                site_url, library_id, item_id_int
+                            )
+                        )
+                        logger.debug(
+                            f"{item_type} permissions response: {len(role_assignments)} role assignments"
+                        )
                     except (ValueError, TypeError):
                         # If item_id is not numeric, try as string
-                        logger.warning(f"Item ID {item_id} is not numeric, skipping permissions")
+                        logger.warning(
+                            f"Item ID {item_id} is not numeric, skipping permissions"
+                        )
                         role_assignments = []
                 else:
                     raise ValueError(f"Missing required fields for {item_type}: {item}")
@@ -278,29 +309,34 @@ class PermissionAnalyzer:
                 return
 
             # Process each role assignment
-            logger.debug(f"Processing {len(role_assignments)} role assignments for {item_type}")
+            logger.debug(
+                f"Processing {len(role_assignments)} role assignments for {item_type}"
+            )
             for assignment in role_assignments:
                 await self._process_role_assignment(assignment, permission_set)
 
             if not role_assignments:
-                logger.warning(f"No role assignments returned for {item_type} {item.get('id')}")
+                logger.warning(
+                    f"No role assignments returned for {item_type} {item.get('id')}"
+                )
 
         except SharePointAPIError as e:
-            logger.error(f"Failed to get permissions for {item_type} {item.get('id')}: {e}")
+            logger.error(
+                f"Failed to get permissions for {item_type} {item.get('id')}: {e}"
+            )
             self.stats["errors"] += 1
             # Add default permission entry when API fails
             self._add_default_permission(permission_set, item, item_type)
         except Exception as e:
-            logger.error(f"Unexpected error getting permissions for {item_type} {item.get('id')}: {e}")
+            logger.error(
+                f"Unexpected error getting permissions for {item_type} {item.get('id')}: {e}"
+            )
             self.stats["errors"] += 1
             # Add default permission entry when API fails
             self._add_default_permission(permission_set, item, item_type)
 
     async def _get_inherited_permissions(
-        self,
-        item: Dict[str, Any],
-        item_type: str,
-        permission_set: PermissionSet
+        self, item: Dict[str, Any], item_type: str, permission_set: PermissionSet
     ):
         """Traverses up the hierarchy to find the source of inherited permissions."""
         # Get parent item based on type
@@ -312,13 +348,13 @@ class PermissionAnalyzer:
             if item.get("folder_id"):
                 parent_item = await self.db_repo.fetch_one(
                     "SELECT * FROM folders WHERE folder_id = ?",
-                    (item.get("folder_id"),)
+                    (item.get("folder_id"),),
                 )
                 parent_type = "folder"
             else:
                 parent_item = await self.db_repo.fetch_one(
                     "SELECT * FROM libraries WHERE library_id = ?",
-                    (item.get("library_id"),)
+                    (item.get("library_id"),),
                 )
                 parent_type = "library"
         elif item_type == "folder":
@@ -326,13 +362,13 @@ class PermissionAnalyzer:
             if item.get("parent_folder_id"):
                 parent_item = await self.db_repo.fetch_one(
                     "SELECT * FROM folders WHERE folder_id = ?",
-                    (item.get("parent_folder_id"),)
+                    (item.get("parent_folder_id"),),
                 )
                 parent_type = "folder"
             else:
                 parent_item = await self.db_repo.fetch_one(
                     "SELECT * FROM libraries WHERE library_id = ?",
-                    (item.get("library_id"),)
+                    (item.get("library_id"),),
                 )
                 parent_type = "library"
         elif item_type == "library":
@@ -340,22 +376,24 @@ class PermissionAnalyzer:
             site_id = item.get("site_id")
             if site_id:
                 parent_item = await self.db_repo.fetch_one(
-                    "SELECT * FROM sites WHERE site_id = ?",
-                    (site_id,)
+                    "SELECT * FROM sites WHERE site_id = ?", (site_id,)
                 )
                 parent_type = "site"
 
         if parent_item:
             # Recursively get parent's permissions
             parent_permissions = await self.analyze_item_permissions(
-                parent_item,
-                parent_type
+                parent_item, parent_type
             )
 
             # Copy permissions from parent, marking them as inherited
             if parent_permissions.inheritance_source_id:
-                permission_set.inheritance_source_id = parent_permissions.inheritance_source_id
-                permission_set.inheritance_source_path = parent_permissions.inheritance_source_path
+                permission_set.inheritance_source_id = (
+                    parent_permissions.inheritance_source_id
+                )
+                permission_set.inheritance_source_path = (
+                    parent_permissions.inheritance_source_path
+                )
             else:
                 permission_set.inheritance_source_id = parent_permissions.object_id
                 permission_set.inheritance_source_path = parent_permissions.object_path
@@ -371,14 +409,12 @@ class PermissionAnalyzer:
                     granted_by=perm.granted_by,
                     inheritance_source=permission_set.inheritance_source_path,
                     is_external=perm.is_external,
-                    is_anonymous_link=perm.is_anonymous_link
+                    is_anonymous_link=perm.is_anonymous_link,
                 )
                 permission_set.add_permission(inherited_perm)
 
     async def _process_role_assignment(
-        self,
-        assignment: Dict[str, Any],
-        permission_set: PermissionSet
+        self, assignment: Dict[str, Any], permission_set: PermissionSet
     ):
         """Process a single role assignment."""
         logger.debug(f"Processing role assignment: {assignment}")
@@ -409,10 +445,7 @@ class PermissionAnalyzer:
             if principal_type == PrincipalType.GROUP:
                 # Expand group membership
                 await self._expand_and_add_group_permissions(
-                    principal_id,
-                    principal_name,
-                    permission_level,
-                    permission_set
+                    principal_id, principal_name, permission_level, permission_set
                 )
             else:
                 # Add individual permission
@@ -424,7 +457,7 @@ class PermissionAnalyzer:
                     is_inherited=False,
                     granted_at=datetime.now(timezone.utc),
                     is_external=is_external,
-                    is_anonymous_link=is_anonymous
+                    is_anonymous_link=is_anonymous,
                 )
                 permission_set.add_permission(entry)
 
@@ -433,7 +466,7 @@ class PermissionAnalyzer:
         group_id: str,
         group_name: str,
         permission_level: str,
-        permission_set: PermissionSet
+        permission_set: PermissionSet,
     ):
         """Expand group membership and add permissions for all members."""
         try:
@@ -447,7 +480,7 @@ class PermissionAnalyzer:
                 principal_type=PrincipalType.GROUP,
                 permission_level=permission_level,
                 is_inherited=False,
-                granted_at=datetime.now(timezone.utc)
+                granted_at=datetime.now(timezone.utc),
             )
             permission_set.add_permission(group_entry)
 
@@ -456,61 +489,89 @@ class PermissionAnalyzer:
                 is_external = self._is_external_user(member)
                 member_entry = PermissionEntry(
                     principal_id=member.get("id", ""),
-                    principal_name=member.get("displayName", member.get("userPrincipalName", "Unknown")),
+                    principal_name=member.get(
+                        "displayName", member.get("userPrincipalName", "Unknown")
+                    ),
                     principal_type=PrincipalType.USER,
                     permission_level=permission_level,
                     is_inherited=False,
                     granted_at=datetime.now(timezone.utc),
                     granted_by=f"Group: {group_name}",
-                    is_external=is_external
+                    is_external=is_external,
                 )
                 permission_set.add_permission(member_entry)
 
         except Exception as e:
             logger.error(f"Failed to expand group {group_id}: {e}")
 
-    async def expand_group_permissions(self, group_id: str) -> List[Dict[str, Any]]:
+    async def expand_group_permissions(self, group_id: str) -> GroupMembership:
         """Expands a group to get all its members, including nested groups."""
         cache_key = f"group_members:{group_id}"
-        cached_members = await self.cache.get(cache_key)
-        if cached_members:
-            return cached_members
+        cached = await self.cache.get(cache_key)
+        if cached:
+            return GroupMembership(
+                group_id=cached["group_id"],
+                group_name=cached.get("group_name", ""),
+                members=cached.get("members", []),
+                nested_groups=cached.get("nested_groups", []),
+                total_member_count=cached.get("total_member_count", 0),
+                last_expanded=datetime.fromisoformat(cached["last_expanded"]),
+            )
 
         try:
-            # Use Graph API's transitiveMembers endpoint
-            url = f"https://graph.microsoft.com/v1.0/groups/{group_id}/transitiveMembers"
-            members = []
+            raw_members = await self.graph_client.expand_group_members_transitive(
+                group_id
+            )
+            users = [
+                m
+                for m in raw_members
+                if m.get("@odata.type") == "#microsoft.graph.user"
+            ]
+            nested_groups = [
+                m["id"]
+                for m in raw_members
+                if m.get("@odata.type") == "#microsoft.graph.group"
+            ]
 
-            while url:
-                response = await self._run_api_task(
-                    self.graph_client.get_with_retry(url)
-                )
+            group_info = await self.graph_client.get_group_info(group_id)
 
-                for member in response.get('value', []):
-                    if member.get('@odata.type') == '#microsoft.graph.user':
-                        members.append({
-                            'id': member['id'],
-                            'displayName': member.get('displayName', ''),
-                            'userPrincipalName': member.get('userPrincipalName', ''),
-                            'mail': member.get('mail', '')
-                        })
+            membership = GroupMembership(
+                group_id=group_id,
+                group_name=group_info.get("displayName", "Unknown Group"),
+                members=users,
+                nested_groups=nested_groups,
+                total_member_count=len(users),
+                last_expanded=datetime.now(timezone.utc),
+            )
 
-                # Handle pagination
-                url = response.get('@odata.nextLink')
+            await self.cache.set(
+                cache_key,
+                {
+                    "group_id": membership.group_id,
+                    "group_name": membership.group_name,
+                    "members": membership.members,
+                    "nested_groups": membership.nested_groups,
+                    "total_member_count": membership.total_member_count,
+                    "last_expanded": membership.last_expanded.isoformat(),
+                },
+                ttl=21600,
+            )
 
-            # Cache for 6 hours
-            await self.cache.set(cache_key, members, ttl=21600)
-            return members
+            return membership
 
         except Exception as e:
             logger.error(f"Failed to expand group {group_id}: {e}")
-            return []
+            return GroupMembership(
+                group_id=group_id,
+                group_name="Unknown Group",
+                members=[],
+                nested_groups=[],
+                total_member_count=0,
+                last_expanded=datetime.now(timezone.utc),
+            )
 
     async def _check_external_sharing(
-        self,
-        item: Dict[str, Any],
-        item_type: str,
-        permission_set: PermissionSet
+        self, item: Dict[str, Any], item_type: str, permission_set: PermissionSet
     ):
         """Check for external sharing links and anonymous access."""
         try:
@@ -537,19 +598,25 @@ class PermissionAnalyzer:
                         principal_type=PrincipalType.ANONYMOUS,
                         permission_level="Read" if "View" in link_type else "Edit",
                         is_inherited=False,
-                        granted_at=datetime.fromisoformat(link.get("createdDateTime", "").replace("Z", "+00:00")) if link.get("createdDateTime") else None,
-                        is_anonymous_link=True
+                        granted_at=(
+                            datetime.fromisoformat(
+                                link.get("createdDateTime", "").replace("Z", "+00:00")
+                            )
+                            if link.get("createdDateTime")
+                            else None
+                        ),
+                        is_anonymous_link=True,
                     )
                     permission_set.add_permission(anon_entry)
                     self.stats["anonymous_links"] += 1
 
         except Exception as e:
-            logger.debug(f"Could not check external sharing for {item_type} {item.get('id')}: {e}")
+            logger.debug(
+                f"Could not check external sharing for {item_type} {item.get('id')}: {e}"
+            )
 
     async def _get_site_url_for_item(
-        self,
-        item: Dict[str, Any],
-        item_type: str
+        self, item: Dict[str, Any], item_type: str
     ) -> Optional[str]:
         """Get the site URL for an item."""
         # First check if site_url is already in the item
@@ -562,15 +629,16 @@ class PermissionAnalyzer:
             site_id = item.get("site_id")
             if site_id:
                 site = await self.db_repo.fetch_one(
-                    "SELECT url FROM sites WHERE site_id = ?",
-                    (site_id,)
+                    "SELECT url FROM sites WHERE site_id = ?", (site_id,)
                 )
                 if site:
                     return site.get("url")
 
         return None
 
-    def _get_principal_type(self, principal_type_value: int, member: Dict[str, Any]) -> PrincipalType:
+    def _get_principal_type(
+        self, principal_type_value: int, member: Dict[str, Any]
+    ) -> PrincipalType:
         """Determine the principal type from SharePoint values."""
         # SharePoint principal type values:
         # 1 = User, 2 = DL, 4 = Security Group, 8 = SharePoint Group
@@ -596,8 +664,12 @@ class PermissionAnalyzer:
         email = member.get("Email", "") or member.get("mail", "")
 
         external_indicators = [
-            "#ext#", "#EXT#", "urn:spo:guest", "_external",
-            "#guest#", "Guest User"
+            "#ext#",
+            "#EXT#",
+            "urn:spo:guest",
+            "_external",
+            "#guest#",
+            "Guest User",
         ]
 
         for indicator in external_indicators:
@@ -611,10 +683,7 @@ class PermissionAnalyzer:
         return False
 
     def _add_default_permission(
-        self,
-        permission_set: PermissionSet,
-        item: Dict[str, Any],
-        item_type: str
+        self, permission_set: PermissionSet, item: Dict[str, Any], item_type: str
     ):
         """Add default permission entry when actual permissions cannot be retrieved."""
         entry = PermissionEntry(
@@ -626,11 +695,13 @@ class PermissionAnalyzer:
             granted_at=datetime.now(timezone.utc),
             inheritance_source="Unable to retrieve permissions",
             is_external=False,
-            is_anonymous_link=False
+            is_anonymous_link=False,
         )
         permission_set.add_permission(entry)
 
-    async def _cache_permission_set(self, cache_key: str, permission_set: PermissionSet):
+    async def _cache_permission_set(
+        self, cache_key: str, permission_set: PermissionSet
+    ):
         """Cache a permission set."""
         cache_data = {
             "object_type": permission_set.object_type,
@@ -652,10 +723,10 @@ class PermissionAnalyzer:
                     "granted_by": p.granted_by,
                     "inheritance_source": p.inheritance_source,
                     "is_external": p.is_external,
-                    "is_anonymous_link": p.is_anonymous_link
+                    "is_anonymous_link": p.is_anonymous_link,
                 }
                 for p in permission_set.permissions
-            ]
+            ],
         }
         await self.cache.set(cache_key, cache_data, ttl=3600)
 
@@ -669,7 +740,7 @@ class PermissionAnalyzer:
             inheritance_source_id=cached_data.get("inheritance_source_id"),
             inheritance_source_path=cached_data.get("inheritance_source_path"),
             external_users_count=cached_data.get("external_users_count", 0),
-            anonymous_links_count=cached_data.get("anonymous_links_count", 0)
+            anonymous_links_count=cached_data.get("anonymous_links_count", 0),
         )
 
         # Reconstruct permissions
@@ -680,11 +751,15 @@ class PermissionAnalyzer:
                 principal_type=PrincipalType(perm_data["principal_type"]),
                 permission_level=perm_data["permission_level"],
                 is_inherited=perm_data["is_inherited"],
-                granted_at=datetime.fromisoformat(perm_data["granted_at"]) if perm_data.get("granted_at") else None,
+                granted_at=(
+                    datetime.fromisoformat(perm_data["granted_at"])
+                    if perm_data.get("granted_at")
+                    else None
+                ),
                 granted_by=perm_data.get("granted_by"),
                 inheritance_source=perm_data.get("inheritance_source"),
                 is_external=perm_data.get("is_external", False),
-                is_anonymous_link=perm_data.get("is_anonymous_link", False)
+                is_anonymous_link=perm_data.get("is_anonymous_link", False),
             )
             permission_set.permissions.append(perm)
 
