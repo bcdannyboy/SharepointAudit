@@ -37,21 +37,21 @@ class DiscoveryStage(PipelineStage):
 
             # Fetch discovered data from database for pipeline processing
             if context.db_repository:
-                # Get all discovered sites
-                sites = await self._fetch_sites(context.db_repository)
+                # Get all discovered sites (filtered if specific sites were requested)
+                sites = await self._fetch_sites(context.db_repository, sites_to_process)
                 context.sites = sites
                 context.raw_data.extend(sites)
 
-                # Get discovered libraries
-                libraries = await self._fetch_libraries(context.db_repository)
+                # Get discovered libraries (filtered by site if specific sites were requested)
+                libraries = await self._fetch_libraries(context.db_repository, sites)
                 context.libraries = libraries
 
-                # Get discovered files
-                files = await self._fetch_files(context.db_repository)
+                # Get discovered files (filtered by site if specific sites were requested)
+                files = await self._fetch_files(context.db_repository, sites)
                 context.files = files
 
-                # Get discovered folders
-                folders = await self._fetch_folders(context.db_repository)
+                # Get discovered folders (filtered by site if specific sites were requested)
+                folders = await self._fetch_folders(context.db_repository, sites)
                 context.folders = folders
 
                 # Update total item count
@@ -75,25 +75,48 @@ class DiscoveryStage(PipelineStage):
 
         return context
 
-    async def _fetch_sites(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
-        """Fetch all discovered sites from the database."""
-        query = "SELECT * FROM sites"
-        return await db_repo.fetch_all(query)
+    async def _fetch_sites(self, db_repo: DatabaseRepository, sites_to_process: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Fetch discovered sites from the database, optionally filtered by URL."""
+        if sites_to_process:
+            # Normalize URLs for comparison
+            normalized_urls = [url.rstrip("/").lower() for url in sites_to_process]
+            # Use parameterized query with placeholders
+            placeholders = ",".join(["?" for _ in normalized_urls])
+            query = f"SELECT * FROM sites WHERE LOWER(TRIM(url, '/')) IN ({placeholders})"
+            return await db_repo.fetch_all(query, tuple(normalized_urls))
+        else:
+            query = "SELECT * FROM sites"
+            return await db_repo.fetch_all(query)
 
-    async def _fetch_libraries(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
-        """Fetch all discovered libraries from the database."""
-        query = "SELECT * FROM libraries"
-        return await db_repo.fetch_all(query)
+    async def _fetch_libraries(self, db_repo: DatabaseRepository, sites: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Fetch discovered libraries from the database for specific sites."""
+        if not sites:
+            return []
 
-    async def _fetch_files(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
-        """Fetch all discovered files from the database."""
-        query = "SELECT * FROM files"
-        return await db_repo.fetch_all(query)
+        site_ids = [site['site_id'] for site in sites]
+        placeholders = ",".join(["?" for _ in site_ids])
+        query = f"SELECT * FROM libraries WHERE site_id IN ({placeholders})"
+        return await db_repo.fetch_all(query, tuple(site_ids))
 
-    async def _fetch_folders(self, db_repo: DatabaseRepository) -> List[Dict[str, Any]]:
-        """Fetch all discovered folders from the database."""
-        query = "SELECT * FROM folders"
-        return await db_repo.fetch_all(query)
+    async def _fetch_files(self, db_repo: DatabaseRepository, sites: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Fetch discovered files from the database for specific sites."""
+        if not sites:
+            return []
+
+        site_ids = [site['site_id'] for site in sites]
+        placeholders = ",".join(["?" for _ in site_ids])
+        query = f"SELECT * FROM files WHERE site_id IN ({placeholders})"
+        return await db_repo.fetch_all(query, tuple(site_ids))
+
+    async def _fetch_folders(self, db_repo: DatabaseRepository, sites: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Fetch discovered folders from the database for specific sites."""
+        if not sites:
+            return []
+
+        site_ids = [site['site_id'] for site in sites]
+        placeholders = ",".join(["?" for _ in site_ids])
+        query = f"SELECT * FROM folders WHERE site_id IN ({placeholders})"
+        return await db_repo.fetch_all(query, tuple(site_ids))
 
 
 class ValidationStage(PipelineStage):
