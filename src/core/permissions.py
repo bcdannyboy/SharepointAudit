@@ -190,6 +190,10 @@ class PermissionAnalyzer:
         item_type: str
     ) -> bool:
         """Check if an item has unique role assignments."""
+        # Sites always have unique permissions (they're the root)
+        if item_type == "site":
+            return True
+
         # Check the has_unique_permissions flag first
         has_unique = (
             item.get("has_unique_role_assignments", False) or
@@ -198,18 +202,23 @@ class PermissionAnalyzer:
         )
 
         # For items other than sites, we might need to check via API
-        if not has_unique and item_type != "site":
+        if not has_unique:
             try:
                 site_url = await self._get_site_url_for_item(item, item_type)
-                if site_url and item_type in ["library", "folder", "file"]:
-                    # Check using SharePoint API
+                if site_url:
                     library_id = item.get("library_id")
-                    item_id = item.get("id") or item.get("file_id") or item.get("folder_id")
 
-                    if library_id and item_id and item_type in ["folder", "file"]:
-                        has_unique = await self._run_api_task(
-                            self.sp_client.check_unique_permissions(site_url, library_id, int(item_id))
-                        )
+                    if item_type == "library":
+                        # For libraries, we need to check if they have unique permissions
+                        # This would require a different API call, so for now we'll assume they inherit
+                        # unless the flag is already set
+                        pass
+                    elif item_type in ["folder", "file"]:
+                        item_id = item.get("id") or item.get("file_id") or item.get("folder_id")
+                        if library_id and item_id:
+                            has_unique = await self.sp_client.check_unique_permissions(
+                                site_url, library_id, int(item_id)
+                            )
             except Exception as e:
                 logger.debug(f"Could not check unique permissions for {item_type} {item.get('id')}: {e}")
 
@@ -229,16 +238,21 @@ class PermissionAnalyzer:
                 raise ValueError(f"No site URL found for {item_type}: {item}")
 
             # Get role assignments from SharePoint
+            logger.debug(f"Getting permissions for {item_type} with site_url: {site_url}")
+
             if item_type == "site":
                 role_assignments = await self._run_api_task(
                     self.sp_client.get_site_permissions(site_url)
                 )
+                logger.debug(f"Site permissions response: {len(role_assignments)} role assignments")
             elif item_type == "library":
                 library_id = item.get("library_id") or item.get("id")
                 if library_id:
+                    logger.debug(f"Getting library permissions for library_id: {library_id}")
                     role_assignments = await self._run_api_task(
                         self.sp_client.get_library_permissions(site_url, library_id)
                     )
+                    logger.debug(f"Library permissions response: {len(role_assignments)} role assignments")
                 else:
                     raise ValueError(f"Missing library_id for library: {item}")
             elif item_type in ["folder", "file"]:
@@ -248,9 +262,11 @@ class PermissionAnalyzer:
                     # Convert item_id to int if it's numeric
                     try:
                         item_id_int = int(item_id)
+                        logger.debug(f"Getting {item_type} permissions for library_id: {library_id}, item_id: {item_id_int}")
                         role_assignments = await self._run_api_task(
                             self.sp_client.get_item_permissions(site_url, library_id, item_id_int)
                         )
+                        logger.debug(f"{item_type} permissions response: {len(role_assignments)} role assignments")
                     except (ValueError, TypeError):
                         # If item_id is not numeric, try as string
                         logger.warning(f"Item ID {item_id} is not numeric, skipping permissions")
@@ -262,8 +278,12 @@ class PermissionAnalyzer:
                 return
 
             # Process each role assignment
+            logger.debug(f"Processing {len(role_assignments)} role assignments for {item_type}")
             for assignment in role_assignments:
                 await self._process_role_assignment(assignment, permission_set)
+
+            if not role_assignments:
+                logger.warning(f"No role assignments returned for {item_type} {item.get('id')}")
 
         except SharePointAPIError as e:
             logger.error(f"Failed to get permissions for {item_type} {item.get('id')}: {e}")
@@ -361,8 +381,15 @@ class PermissionAnalyzer:
         permission_set: PermissionSet
     ):
         """Process a single role assignment."""
+        logger.debug(f"Processing role assignment: {assignment}")
         member = assignment.get("Member", {})
+
+        # Handle different response formats for role bindings
         role_bindings = assignment.get("RoleDefinitionBindings", [])
+        if isinstance(role_bindings, dict) and "results" in role_bindings:
+            role_bindings = role_bindings["results"]
+        elif not isinstance(role_bindings, list):
+            role_bindings = []
 
         principal_id = member.get("Id", "")
         principal_name = member.get("Title", member.get("LoginName", "Unknown"))
@@ -665,7 +692,7 @@ class PermissionAnalyzer:
 
     async def _run_api_task(self, coro):
         """Run an API task with the concurrency manager."""
-        return await self.concurrency_manager.run_task(coro)
+        return await self.concurrency_manager.run_api_task(coro)
 
     def get_statistics(self) -> Dict[str, int]:
         """Get current statistics."""

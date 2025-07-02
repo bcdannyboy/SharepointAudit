@@ -162,7 +162,13 @@ class SharePointAPIClient:
 
         try:
             response = await self.get_with_retry(api_url)
-            return response.get("value", [])
+            # SharePoint might return the results directly or in a value property
+            if isinstance(response, list):
+                results = response
+            else:
+                results = response.get("value", response.get("d", {}).get("results", []))
+            logger.debug(f"SharePoint API returned {len(results)} role assignments for site {site_url}")
+            return results
         except Exception as e:
             logger.error(f"Failed to get site permissions for {site_url}: {e}")
             raise SharePointAPIError(f"Failed to get site permissions: {e}")
@@ -177,7 +183,13 @@ class SharePointAPIClient:
 
         try:
             response = await self.get_with_retry(api_url)
-            return response.get("value", [])
+            # SharePoint might return the results directly or in a value property
+            if isinstance(response, list):
+                results = response
+            else:
+                results = response.get("value", response.get("d", {}).get("results", []))
+            logger.debug(f"SharePoint API returned {len(results)} role assignments for library {library_id}")
+            return results
         except Exception as e:
             logger.error(f"Failed to get library permissions for {library_id}: {e}")
             raise SharePointAPIError(f"Failed to get library permissions: {e}")
@@ -193,7 +205,13 @@ class SharePointAPIClient:
 
         try:
             response = await self.get_with_retry(api_url)
-            return response.get("value", [])
+            # SharePoint might return the results directly or in a value property
+            if isinstance(response, list):
+                results = response
+            else:
+                results = response.get("value", response.get("d", {}).get("results", []))
+            logger.debug(f"SharePoint API returned {len(results)} role assignments for item {item_id}")
+            return results
         except Exception as e:
             logger.error(f"Failed to get item permissions for {item_id}: {e}")
             raise SharePointAPIError(f"Failed to get item permissions: {e}")
@@ -209,7 +227,16 @@ class SharePointAPIClient:
 
         try:
             response = await self.get_with_retry(api_url)
-            return response.get("value", False)
+            # Handle different response formats
+            if isinstance(response, bool):
+                return response
+            elif isinstance(response, dict):
+                # Check for value in different formats
+                if "value" in response:
+                    return response["value"]
+                elif "d" in response and "HasUniqueRoleAssignments" in response["d"]:
+                    return response["d"]["HasUniqueRoleAssignments"]
+            return False
         except Exception as e:
             logger.error(f"Failed to check unique permissions for {item_id}: {e}")
             return False

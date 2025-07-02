@@ -16,3 +16,7 @@ class ConcurrencyManager:
     async def run_db_task(self, coro: Coroutine[Any, Any, Any]) -> Any:
         async with self.db_semaphore:
             return await coro
+
+    async def run_task(self, coro: Coroutine[Any, Any, Any]) -> Any:
+        """Alias for run_api_task for backwards compatibility."""
+        return await self.run_api_task(coro)
