@@ -6,7 +6,8 @@ import pytest
 
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.core.discovery import DiscoveryModule
 from src.utils.checkpoint_manager import CheckpointManager
@@ -39,7 +40,9 @@ def mock_db_repo():
 
 
 @pytest.fixture
-def discovery_module(mock_graph_client, mock_sharepoint_client, mock_checkpoint_manager, mock_db_repo):
+def discovery_module(
+    mock_graph_client, mock_sharepoint_client, mock_checkpoint_manager, mock_db_repo
+):
     module = DiscoveryModule(
         mock_graph_client,
         mock_sharepoint_client,
@@ -51,7 +54,9 @@ def discovery_module(mock_graph_client, mock_sharepoint_client, mock_checkpoint_
     return module
 
 
-def test_discover_all_sites_uses_delta(discovery_module, mock_graph_client, mock_checkpoint_manager):
+def test_discover_all_sites_uses_delta(
+    discovery_module, mock_graph_client, mock_checkpoint_manager
+):
     async def run():
         # Create a result object with sites
         sites = [
@@ -61,7 +66,7 @@ def test_discover_all_sites_uses_delta(discovery_module, mock_graph_client, mock
                 webUrl="https://tenant.sharepoint.com/sites/site1",
                 description="Test site 1",
                 createdDateTime="2023-01-01T00:00:00Z",
-                lastModifiedDateTime="2023-01-02T00:00:00Z"
+                lastModifiedDateTime="2023-01-02T00:00:00Z",
             )
         ]
         result = SimpleNamespace(items=sites, delta_token="TEST_TOKEN")
@@ -72,13 +77,15 @@ def test_discover_all_sites_uses_delta(discovery_module, mock_graph_client, mock
         await discovery_module.run_discovery("test_run")
 
         # Verify delta token was saved
-        mock_checkpoint_manager.save_checkpoint.assert_any_call("test_run", "sites_delta_token", "TEST_TOKEN")
+        mock_checkpoint_manager.save_checkpoint.assert_any_call(
+            "test_run", "sites_delta_token", "TEST_TOKEN"
+        )
 
         # Verify sites were saved to database
         assert discovery_module.db_repo.bulk_insert.called
         call_args = discovery_module.db_repo.bulk_insert.call_args_list[0]
-        assert call_args[0][0] == 'sites'  # Table name
-        assert len(call_args[0][1]) == 1   # One site record
+        assert call_args[0][0] == "sites"  # Table name
+        assert len(call_args[0][1]) == 1  # One site record
 
     asyncio.run(run())
 
@@ -91,15 +98,15 @@ def test_discover_site_content_in_parallel(discovery_module):
         called_methods = []
 
         async def track_libraries(*args):
-            called_methods.append('libraries')
+            called_methods.append("libraries")
             return []
 
         async def track_lists(*args):
-            called_methods.append('lists')
+            called_methods.append("lists")
             return []
 
         async def track_subsites(*args):
-            called_methods.append('subsites')
+            called_methods.append("subsites")
             return []
 
         discovery_module._discover_libraries = track_libraries
@@ -109,14 +116,16 @@ def test_discover_site_content_in_parallel(discovery_module):
         await discovery_module.discover_site_content("run", test_site)
 
         # All three methods should have been called
-        assert 'libraries' in called_methods
-        assert 'lists' in called_methods
-        assert 'subsites' in called_methods
+        assert "libraries" in called_methods
+        assert "lists" in called_methods
+        assert "subsites" in called_methods
 
     asyncio.run(run())
 
 
-def test_discovery_resumes_from_checkpoint(discovery_module, mock_graph_client, mock_checkpoint_manager):
+def test_discovery_resumes_from_checkpoint(
+    discovery_module, mock_graph_client, mock_checkpoint_manager
+):
     async def run():
         async def restore_side_effect(run_id, key):
             if key == "site_site1_status":
@@ -152,6 +161,30 @@ def test_discovery_resumes_from_checkpoint(discovery_module, mock_graph_client, 
     asyncio.run(run())
 
 
+def test_run_discovery_filters_sites(discovery_module):
+    async def run():
+        site1 = SimpleNamespace(
+            id="site1", webUrl="https://contoso.sharepoint.com/sites/one"
+        )
+        site2 = SimpleNamespace(
+            id="site2", webUrl="https://contoso.sharepoint.com/sites/two"
+        )
+
+        discovery_module.discover_all_sites = AsyncMock(return_value=[site1, site2])
+        discovery_module._discover_site_with_semaphore = AsyncMock()
+
+        await discovery_module.run_discovery(
+            "run", ["https://contoso.sharepoint.com/sites/two/"]
+        )
+
+        # Should only process the matching site
+        discovery_module._discover_site_with_semaphore.assert_called_once()
+        processed_site = discovery_module._discover_site_with_semaphore.call_args[0][1]
+        assert processed_site == site2
+
+    asyncio.run(run())
+
+
 def test_discover_libraries_saves_to_database(discovery_module, mock_graph_client):
     async def run():
         test_site = SimpleNamespace(id="site123")
@@ -163,14 +196,14 @@ def test_discover_libraries_saves_to_database(discovery_module, mock_graph_clien
                     "id": "lib1",
                     "name": "Documents",
                     "description": "Document library",
-                    "createdDateTime": "2023-01-01T00:00:00Z"
+                    "createdDateTime": "2023-01-01T00:00:00Z",
                 },
                 {
                     "id": "lib2",
                     "name": "Site Assets",
                     "description": "Site assets library",
-                    "createdDateTime": "2023-01-02T00:00:00Z"
-                }
+                    "createdDateTime": "2023-01-02T00:00:00Z",
+                },
             ]
         }
 
@@ -185,7 +218,7 @@ def test_discover_libraries_saves_to_database(discovery_module, mock_graph_clien
         discovery_module.db_repo.bulk_insert.assert_called_once()
         call_args = discovery_module.db_repo.bulk_insert.call_args
         assert call_args[0][0] == "libraries"  # Table name
-        assert len(call_args[0][1]) == 2      # Two libraries
+        assert len(call_args[0][1]) == 2  # Two libraries
 
         # Verify library data structure
         saved_libraries = call_args[0][1]
@@ -210,7 +243,7 @@ def test_discover_folder_contents_with_pagination(discovery_module, mock_graph_c
                 {"id": "file1", "name": "doc1.pdf", "size": 1000},
                 {"id": "folder1", "name": "Subfolder", "folder": {}},
             ],
-            "@odata.nextLink": "https://graph.microsoft.com/v1.0/sites/site123/drives/lib123/root/children?$skiptoken=abc"
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/sites/site123/drives/lib123/root/children?$skiptoken=abc",
         }
 
         page2_response = {
@@ -234,16 +267,24 @@ def test_discover_folder_contents_with_pagination(discovery_module, mock_graph_c
         assert mock_graph_client.get_with_retry.call_count == 2
 
         # Verify database inserts
-        assert discovery_module.db_repo.bulk_insert.call_count == 2  # One for folders, one for files
+        assert (
+            discovery_module.db_repo.bulk_insert.call_count == 2
+        )  # One for folders, one for files
 
         # Check folder insert
-        folder_call = [call for call in discovery_module.db_repo.bulk_insert.call_args_list
-                      if call[0][0] == "folders"][0]
+        folder_call = [
+            call
+            for call in discovery_module.db_repo.bulk_insert.call_args_list
+            if call[0][0] == "folders"
+        ][0]
         assert len(folder_call[0][1]) == 1  # One folder
 
         # Check file insert
-        file_call = [call for call in discovery_module.db_repo.bulk_insert.call_args_list
-                     if call[0][0] == "files"][0]
+        file_call = [
+            call
+            for call in discovery_module.db_repo.bulk_insert.call_args_list
+            if call[0][0] == "files"
+        ][0]
         assert len(file_call[0][1]) == 2  # Two files
 
     asyncio.run(run())
@@ -266,7 +307,9 @@ def test_error_handling_continues_discovery(discovery_module, mock_graph_client)
             if site.id == "site2":
                 raise Exception("Simulated error")
 
-        discovery_module.discover_site_content = AsyncMock(side_effect=discover_site_content_side_effect)
+        discovery_module.discover_site_content = AsyncMock(
+            side_effect=discover_site_content_side_effect
+        )
 
         # Should not raise exception
         await discovery_module.run_discovery("test_run")
@@ -280,8 +323,10 @@ def test_error_handling_continues_discovery(discovery_module, mock_graph_client)
 def test_semaphore_limits_concurrent_operations(discovery_module, mock_graph_client):
     async def run():
         # Create many sites to test semaphore limiting
-        sites = [SimpleNamespace(id=f"site{i}", title=f"Site {i}", displayName=f"Site {i}")
-                for i in range(50)]
+        sites = [
+            SimpleNamespace(id=f"site{i}", title=f"Site {i}", displayName=f"Site {i}")
+            for i in range(50)
+        ]
         result = SimpleNamespace(items=sites, delta_token=None)
 
         mock_graph_client.get_all_sites_delta.return_value = result
@@ -302,6 +347,8 @@ def test_semaphore_limits_concurrent_operations(discovery_module, mock_graph_cli
         await discovery_module.run_discovery("test_run")
 
         # Verify semaphore limited concurrency
-        assert max_concurrent <= discovery_module.site_semaphore._value + 1  # Allow for small timing variance
+        assert (
+            max_concurrent <= discovery_module.site_semaphore._value + 1
+        )  # Allow for small timing variance
 
     asyncio.run(run())

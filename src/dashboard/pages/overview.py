@@ -166,15 +166,15 @@ def render(db_path: str) -> None:
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
-        total_sites = summary['sites'].get('total_sites', 0)
+        total_sites = summary["sites"].get("total_sites", 0)
         st.metric("Total Sites", f"{total_sites:,}")
 
     with col2:
-        total_libraries = summary['sites'].get('total_libraries', 0)
+        total_libraries = summary["sites"].get("total_libraries", 0)
         st.metric("Total Libraries", f"{total_libraries:,}")
 
     with col3:
-        total_files = summary['sites'].get('total_files', 0)
+        total_files = summary["sites"].get("total_files", 0)
         st.metric("Total Files", f"{total_files:,}")
 
     with col4:
@@ -183,7 +183,7 @@ def render(db_path: str) -> None:
         st.metric("Total Storage", f"{total_gb:.2f} GB")
 
     with col5:
-        external_users = summary.get('external_users', 0)
+        external_users = summary.get("external_users", 0)
         st.metric("External Users", f"{external_users:,}")
 
     # Permission insights
@@ -191,25 +191,17 @@ def render(db_path: str) -> None:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        total_permissions = summary['permissions'].get('total_permissions', 0)
-        st.metric(
-            "Total Permissions", f"{total_permissions:,}"
-        )
+        total_permissions = summary["permissions"].get("total_permissions", 0)
+        st.metric("Total Permissions", f"{total_permissions:,}")
 
     with col2:
-        unique_permissions = summary['permissions'].get('unique_permissions', 0)
-        st.metric(
-            "Unique Permissions", f"{unique_permissions:,}"
-        )
+        unique_permissions = summary["permissions"].get("unique_permissions", 0)
+        st.metric("Unique Permissions", f"{unique_permissions:,}")
 
     with col3:
         total_perms = summary["permissions"].get("total_permissions", 0)
         unique_perms = summary["permissions"].get("unique_permissions", 0)
-        unique_pct = (
-            (unique_perms / total_perms * 100)
-            if total_perms > 0
-            else 0
-        )
+        unique_pct = (unique_perms / total_perms * 100) if total_perms > 0 else 0
         st.metric("Unique %", f"{unique_pct:.1f}%")
 
     # Visualizations
@@ -261,7 +253,7 @@ def render(db_path: str) -> None:
             st.metric("Largest File", f"{max_mb:.2f} MB")
 
         with col3:
-            file_types = stats.get('file_types', 0)
+            file_types = stats.get("file_types", 0)
             st.metric("File Types", f"{file_types}")
 
         with col4:
@@ -274,8 +266,14 @@ def render(db_path: str) -> None:
 
     if not recent_df.empty:
         # Format the dataframe for display
-        recent_df["size_mb"] = recent_df["size_bytes"] / (1024**2)
-        recent_df["modified_at"] = pd.to_datetime(recent_df["modified_at"])
+        try:
+            recent_df["size_mb"] = recent_df["size_bytes"] / (1024**2)
+        except Exception:
+            pass
+        try:
+            recent_df["modified_at"] = pd.to_datetime(recent_df["modified_at"])
+        except Exception:
+            pass
 
         st.dataframe(
             recent_df[["name", "site_title", "modified_by", "modified_at", "size_mb"]],
@@ -308,7 +306,9 @@ def render(db_path: str) -> None:
             f"👥 {summary['external_users']} external users have access to your SharePoint content."
         )
 
-    if summary["sites"].get("total_sites", 0) > 0 and summary["sites"].get("total_size_bytes"):
+    if summary["sites"].get("total_sites", 0) > 0 and summary["sites"].get(
+        "total_size_bytes"
+    ):
         avg_storage_per_site = (
             summary["sites"]["total_size_bytes"]
             / summary["sites"]["total_sites"]
