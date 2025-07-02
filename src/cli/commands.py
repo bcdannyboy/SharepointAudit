@@ -23,14 +23,14 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from src.core.pipeline import AuditPipeline, PipelineContext
-from src.api.auth_manager import AuthenticationManager
-from src.api.graph_client import GraphAPIClient
-from src.api.sharepoint_client import SharePointAPIClient
-from src.cache.cache_manager import CacheManager
-from src.core.discovery import DiscoveryModule
-from src.core.permissions import PermissionAnalyzer
-from src.core.processors import (
+from ..core.pipeline import AuditPipeline, PipelineContext
+from ..api.auth_manager import AuthenticationManager
+from ..api.graph_client import GraphAPIClient
+from ..api.sharepoint_client import SharePointAPIClient
+from ..cache.cache_manager import CacheManager
+from ..core.discovery import DiscoveryModule
+from ..core.permissions import PermissionAnalyzer
+from ..core.processors import (
     DiscoveryStage,
     ValidationStage,
     TransformationStage,
@@ -38,14 +38,14 @@ from src.core.processors import (
     StorageStage,
     PermissionAnalysisStage,
 )
-from src.core.pipeline_metrics import PipelineMetrics
-from src.database.repository import DatabaseRepository
-from src.utils.checkpoint_manager import CheckpointManager
-from src.utils.rate_limiter import RateLimiter
-from src.utils.retry_handler import RetryStrategy, RetryConfig
-from src.cli.config_parser import load_and_merge_config
-from src.cli.output import RichOutput, setup_logging
-from src.utils.config_parser import AuthConfig
+from ..core.pipeline_metrics import PipelineMetrics
+from ..database.repository import DatabaseRepository
+from ..utils.checkpoint_manager import CheckpointManager
+from ..utils.rate_limiter import RateLimiter
+from ..utils.retry_handler import RetryStrategy, RetryConfig
+from .config_parser import load_and_merge_config
+from .output import RichOutput, setup_logging
+from ..utils.config_parser import AuthConfig
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -557,7 +557,7 @@ def health(ctx, config, check_auth, check_api, check_db):
     if check_auth or check_api:
         try:
             with output.status("Loading configuration..."):
-                from utils.config_parser import load_config
+                from ..utils.config_parser import load_config
 
                 app_config = load_config(config)
             output.success("Configuration loaded")

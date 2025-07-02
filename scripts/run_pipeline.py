@@ -264,7 +264,6 @@ async def create_pipeline(config_path: str = "config/config.json",
     pipeline.add_stage(ValidationStage())
     pipeline.add_stage(TransformationStage())
     pipeline.add_stage(EnrichmentStage())
-    pipeline.add_stage(StorageStage(db_repo))
 
     # Always add permission analysis stage for comprehensive auditing
     logger.info("Adding permission analysis stage...")
@@ -281,6 +280,9 @@ async def create_pipeline(config_path: str = "config/config.json",
     )
 
     pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
+
+    # Add storage stage AFTER permission analysis so permissions are saved
+    pipeline.add_stage(StorageStage(db_repo))
 
     return pipeline
 

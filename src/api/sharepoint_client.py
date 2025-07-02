@@ -223,20 +223,28 @@ class SharePointAPIClient:
         item_id: int
     ) -> bool:
         """Check if an item has unique permissions."""
-        api_url = f"{site_url}/_api/web/lists(guid'{library_id}')/items({item_id})/HasUniqueRoleAssignments"
+        # Use $select to get the HasUniqueRoleAssignments property
+        api_url = f"{site_url}/_api/web/lists(guid'{library_id}')/items({item_id})?$select=Id,HasUniqueRoleAssignments"
 
         try:
             response = await self.get_with_retry(api_url)
             # Handle different response formats
-            if isinstance(response, bool):
-                return response
-            elif isinstance(response, dict):
+            if isinstance(response, dict):
                 # Check for value in different formats
-                if "value" in response:
-                    return response["value"]
+                if "HasUniqueRoleAssignments" in response:
+                    return response["HasUniqueRoleAssignments"]
                 elif "d" in response and "HasUniqueRoleAssignments" in response["d"]:
                     return response["d"]["HasUniqueRoleAssignments"]
             return False
+        except SharePointAPIError as e:
+            # Some items (like certain system items) might not support this property
+            # In such cases, assume they inherit permissions
+            if e.status_code == 400:
+                logger.debug(f"Item {item_id} doesn't support HasUniqueRoleAssignments property, assuming inherited permissions")
+                return False
+            else:
+                logger.error(f"Failed to check unique permissions for {item_id}: {e}")
+                return False
         except Exception as e:
             logger.error(f"Failed to check unique permissions for {item_id}: {e}")
             return False

@@ -7,49 +7,37 @@ from .dashboard_command import dashboard
 
 # Import commands
 try:
-    from .commands import audit as audit_command, backup, restore, health
+    from .commands import audit, backup, restore, health
+except ImportError as e:
+    # If there's an import error, use the simple fallback
+    import traceback
+    print(f"Warning: Unable to load full commands module: {e}")
+    print("Traceback:")
+    traceback.print_exc()
 
-    audit = audit_command
-except Exception as e1:
-    # Fallback to simple audit implementation if full commands fail
-    from .simple_audit import audit as audit_command
+    # Fallback to simple audit implementation
+    from .simple_audit import audit
 
-    audit = audit_command
-
-    # Create fallback audit command
-    @click.command()
-    @click.pass_context
-    def audit(ctx):
-        """Run a comprehensive SharePoint audit."""
-        click.echo("Error: Unable to load audit command due to import issues.")
-        click.echo(f"Details: {e1}")
-        ctx.exit(1)
-
-
-try:
-    from .commands import backup, restore, health
-except Exception as e:
-
+    # Create fallback commands
     @click.command()
     @click.pass_context
     def backup(ctx):
         click.echo("Error: Unable to load backup command due to import issues.")
-        click.echo(f"Details: {e}")
         ctx.exit(1)
 
     @click.command()
     @click.pass_context
     def restore(ctx):
         click.echo("Error: Unable to load restore command due to import issues.")
-        click.echo(f"Details: {e}")
         ctx.exit(1)
 
     @click.command()
     @click.pass_context
     def health(ctx):
         click.echo("Error: Unable to load health command due to import issues.")
-        click.echo(f"Details: {e}")
         ctx.exit(1)
+
+
 
 
 @click.group()

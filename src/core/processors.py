@@ -937,6 +937,7 @@ class PermissionAnalysisStage(PipelineStage):
                                 "is_inherited": perm.is_inherited,
                                 "granted_at": perm.granted_at.isoformat() if perm.granted_at else None,
                                 "granted_by": perm.granted_by,
+                                "inheritance_source": perm.inheritance_source,
                                 "is_external": perm.is_external,
                                 "is_anonymous_link": perm.is_anonymous_link
                             }
