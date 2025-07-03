@@ -778,18 +778,127 @@ class DiscoveryModule(QueueBasedDiscovery):
             return []
 
     def _is_valid_site(self, site_data: Dict[str, Any]) -> bool:
-        """Check if a site should be included in discovery."""
+        """Enhanced site validation with comprehensive filtering logic."""
         site_url = site_data.get("webUrl", "")
         site_name = site_data.get("displayName", site_data.get("name", ""))
+        site_id = site_data.get("id", "")
 
-        # Always filter out personal sites (OneDrive)
-        if any(skip in site_url for skip in ["/personal/", "-my.sharepoint.com"]):
-            logger.debug(f"Skipping personal site: {site_name}")
+        # Log site being evaluated for debugging
+        logger.debug(f"Evaluating site: {site_name} (URL: {site_url}, ID: {site_id})")
+
+        # Always filter out personal sites (OneDrive) - enhanced detection
+        if self._is_personal_site(site_url, site_name, site_data):
+            logger.debug(f"Filtering out personal site: {site_name}")
             return False
 
-        # If active_only is enabled, additional filtering is handled in GraphAPIClient.get_all_sites_delta
-        # This method just does basic validation
+        # Enhanced template-based filtering
+        if self._is_system_template_site(site_data):
+            logger.debug(f"Filtering out system template site: {site_name}")
+            return False
+
+        # Site status validation
+        if self._is_inactive_site(site_data):
+            logger.debug(f"Filtering out inactive site: {site_name}")
+            return False
+
+        # Log successful validation
+        logger.debug(f"Site passed validation: {site_name}")
         return True
+
+    def _is_personal_site(self, site_url: str, site_name: str, site_data: Dict[str, Any]) -> bool:
+        """Enhanced personal site detection beyond URL patterns."""
+        site_url_lower = site_url.lower()
+        site_name_lower = site_name.lower()
+
+        # URL-based detection (primary method)
+        url_patterns = ["/personal/", "-my.sharepoint.com", "/portals/personal/"]
+        if any(pattern in site_url_lower for pattern in url_patterns):
+            return True
+
+        # Template-based detection
+        web_template = site_data.get("webTemplate", "").upper()
+        if web_template in ["SPSPERS#10", "SPSPERS#0"]:  # Personal site templates
+            return True
+
+        # Property-based detection
+        if site_data.get("isPersonalSite", False):
+            return True
+
+        # Name pattern detection (OneDrive sites often have specific naming)
+        name_patterns = ["onedrive", "personal workspace", "my site"]
+        if any(pattern in site_name_lower for pattern in name_patterns):
+            return True
+
+        return False
+
+    def _is_system_template_site(self, site_data: Dict[str, Any]) -> bool:
+        """Enhanced template-based filtering for system sites."""
+        web_template = site_data.get("webTemplate", "").upper()
+
+        # System templates to exclude
+        system_templates = [
+            "SPSMSITEHOST",      # MySite host
+            "REDIRECTSITE",      # Redirect sites
+            "TEAMCHANNEL#1",     # Private team channels
+            "APPCATALOG#0",      # App catalog
+            "SRCHCEN#0",         # Search center
+            "SPSCOMMU#0",        # Community portal
+            "ENTERWIKI#0",       # Enterprise wiki
+            "TENANTADMIN#0",     # Tenant admin
+        ]
+
+        if web_template in system_templates:
+            logger.debug(f"Site filtered by template: {web_template}")
+            return True
+
+        return False
+
+    def _is_inactive_site(self, site_data: Dict[str, Any]) -> bool:
+        """Enhanced site status validation for inactive sites."""
+        # Check archived status
+        if site_data.get("isArchived", False):
+            logger.debug("Site is archived")
+            return True
+
+        # Check deleted status (if available)
+        if site_data.get("deleted") is not None:
+            logger.debug("Site is marked as deleted")
+            return True
+
+        # Enhanced naming pattern detection for inactive sites
+        site_name = site_data.get("displayName", site_data.get("name", "")).lower()
+        inactive_patterns = [
+            "archived", "_archive", "archive_",
+            "test-", "_test", "test_", "-test",
+            "demo-", "_demo", "demo_", "-demo",
+            "old-", "_old", "old_", "-old",
+            "backup", "_backup", "backup_",
+            "template", "_template", "template_",
+            "temp-", "_temp", "temp_",
+            "deleted", "_deleted", "deleted_",
+            "inactive", "_inactive", "inactive_",
+            "deprecated", "_deprecated", "deprecated_"
+        ]
+
+        for pattern in inactive_patterns:
+            if pattern in site_name:
+                logger.debug(f"Site filtered by naming pattern: '{pattern}' in '{site_name}'")
+                return True
+
+        # Check for very old sites (if active_only mode and last modified is available)
+        if self.active_only and 'lastModifiedDateTime' in site_data:
+            try:
+                from datetime import datetime, timezone
+                last_modified = datetime.fromisoformat(site_data['lastModifiedDateTime'].replace('Z', '+00:00'))
+                two_years_ago = datetime.now(timezone.utc).replace(year=datetime.now().year - 2)
+
+                if last_modified < two_years_ago:
+                    logger.debug(f"Site filtered as very old: last modified {last_modified}")
+                    return True
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Could not parse last modified date: {e}")
+
+        return False
 
     async def _save_sites_to_database(self, sites: List[Dict[str, Any]]) -> None:
         """Save discovered sites to the database."""

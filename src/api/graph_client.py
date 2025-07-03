@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from typing import Any, Optional
+from datetime import datetime, timezone
 
 import aiohttp
 
@@ -167,134 +168,369 @@ class GraphAPIClient:
         return await self.retry_strategy.execute_with_retry(operation_id, _do_batch)
 
     async def get_all_sites_delta(self, delta_token: str | None = None, active_only: bool = False) -> Any:
-        """Retrieve all sites using the delta query.
+        """Retrieve all sites using delta query or optimized search when filtering active sites.
 
         Args:
             delta_token: Optional delta token for incremental queries
-            active_only: If True, filter to only return active sites
+            active_only: If True, use server-side filtering to return only active sites
         """
-        url = "https://graph.microsoft.com/v1.0/sites/delta"
-        if delta_token:
-            url += f"?token={delta_token}"
+        # Performance measurement
+        start_time = time.time()
 
-        # Return the raw data - let the discovery module handle conversion
-        result = await self.get_with_retry(url)
+        if active_only:
+            # Use optimized Search API with server-side filtering instead of delta API
+            logger.info("Active-only mode: Using optimized Search API with comprehensive server-side filtering")
+            return await self._get_active_sites_optimized()
+        else:
+            # Use standard delta API for backward compatibility when active_only=False
+            logger.info("Using standard delta API for all sites")
+            url = "https://graph.microsoft.com/v1.0/sites/delta"
+            if delta_token:
+                url += f"?token={delta_token}"
 
-        # If active_only is True, we'll need to use the Search API instead
-        # The delta endpoint doesn't provide archive status
-        if active_only and isinstance(result, dict) and 'value' in result:
-            logger.info("Active-only mode: Using search API to filter active sites")
+            result = await self.get_with_retry(url)
+            elapsed_time = time.time() - start_time
+            sites_count = len(result.get('value', [])) if isinstance(result, dict) else 0
+            logger.info(f"Delta API completed in {elapsed_time:.2f}s, retrieved {sites_count} sites")
+            return result
 
-            # Use the search API which excludes archived sites by default
-            search_url = "https://graph.microsoft.com/v1.0/search/query"
-            search_body = {
-                "requests": [{
-                    "entityTypes": ["site"],
-                    "query": {
-                        "queryString": "NOT path:*/personal/*"  # Exclude personal sites
-                    },
-                    "from": 0,
-                    "size": 500  # Maximum allowed
-                }]
-            }
+    async def _get_active_sites_optimized(self) -> Any:
+        """Optimized server-side filtering using Search API for active sites only.
 
-            all_active_sites = []
-            seen_site_ids = set()  # Track site IDs to prevent duplicates
+        This method implements comprehensive filtering at the API level to avoid
+        fetching all sites and then filtering client-side.
+        """
+        start_time = time.time()
 
-            # Paginate through search results
-            while True:
-                try:
-                    search_result = await self.post_with_retry(search_url, json=search_body)
-                except Exception as e:
-                    logger.error(f"Search API failed: {e}")
-                    logger.warning("Falling back to delta API with client-side filtering")
-                    # Fall back to basic filtering on delta results
-                    filtered_sites = []
-                    for site in result['value']:
-                        site_url = site.get('webUrl', '')
-                        site_name = site.get('displayName', site.get('name', ''))
+        # Enhanced Search API query with comprehensive server-side filtering
+        search_url = "https://graph.microsoft.com/v1.0/search/query"
 
-                        # Skip personal sites
-                        if '/personal/' in site_url or '-my.sharepoint.com' in site_url:
+        # Comprehensive query string that excludes:
+        # - Personal sites (OneDrive): NOT path:*/personal/*
+        # - Archived sites: NOT IsArchived:true
+        # - System templates: NOT WebTemplate:SPSMSITEHOST AND NOT WebTemplate:RedirectSite
+        # - App catalog sites: NOT path:*/appcatalog/*
+        # - Common archived naming patterns: NOT displayName:*archived* etc.
+        query_string = (
+            "contentclass:STS_Site AND "
+            "NOT path:*/personal/* AND "
+            "NOT IsArchived:true AND "
+            "NOT WebTemplate:SPSMSITEHOST AND "
+            "NOT WebTemplate:RedirectSite AND "
+            "NOT path:*/appcatalog/* AND "
+            "NOT displayName:*archived* AND "
+            "NOT displayName:*test* AND "
+            "NOT displayName:*demo* AND "
+            "NOT displayName:*old* AND "
+            "NOT displayName:*backup*"
+        )
+
+        search_body = {
+            "requests": [{
+                "entityTypes": ["site"],
+                "query": {
+                    "queryString": query_string
+                },
+                "from": 0,
+                "size": 500,  # Maximum allowed per request
+                "sortProperties": [
+                    {
+                        "name": "lastModifiedTime",
+                        "isDescending": True
+                    }
+                ]
+            }]
+        }
+
+        all_active_sites = []
+        seen_site_ids = set()
+        api_calls_made = 0
+        total_filtered_out = 0
+        filtering_stats = {
+            "personal_sites": 0,
+            "archived_sites": 0,
+            "system_sites": 0,
+            "naming_pattern_filtered": 0,
+            "duplicates": 0
+        }
+
+        logger.info(f"Starting optimized search with query: {query_string}")
+
+        # Paginate through search results with enhanced error handling
+        while True:
+            try:
+                api_calls_made += 1
+                logger.debug(f"Making Search API call #{api_calls_made} (from: {search_body['requests'][0]['from']})")
+
+                search_result = await self.post_with_retry(search_url, json=search_body)
+
+                if not search_result or 'value' not in search_result or not search_result['value']:
+                    logger.debug("No more search results available")
+                    break
+
+                hits_containers = search_result['value'][0].get('hitsContainers', [])
+                if not hits_containers:
+                    logger.debug("No hits containers found in search result")
+                    break
+
+                found_results_in_page = False
+
+                for container in hits_containers:
+                    hits = container.get('hits', [])
+                    logger.debug(f"Processing {len(hits)} hits from container")
+
+                    for hit in hits:
+                        found_results_in_page = True
+                        resource = hit.get('resource', {})
+
+                        # Convert search result to match delta format
+                        site_data = {
+                            'id': resource.get('id', ''),
+                            'webUrl': resource.get('webUrl', ''),
+                            'displayName': resource.get('displayName', resource.get('name', '')),
+                            'name': resource.get('name', ''),
+                            'createdDateTime': resource.get('createdDateTime'),
+                            'lastModifiedDateTime': resource.get('lastModifiedDateTime'),
+                            'description': resource.get('description', ''),
+                            'webTemplate': resource.get('webTemplate', ''),
+                            'isArchived': resource.get('isArchived', False)
+                        }
+
+                        # Apply additional client-side validation for edge cases
+                        site_url = site_data.get('webUrl', '').lower()
+                        site_name = site_data.get('displayName', '').lower()
+                        site_id = site_data.get('id', '')
+
+                        # Skip if no valid site ID
+                        if not site_id:
+                            logger.debug("Skipping site with no ID")
                             continue
 
-                        # Skip based on naming patterns
-                        name_lower = site_name.lower()
-                        if any(pattern in name_lower for pattern in ['archived', 'test-', 'demo-', 'old-', '_archive', '_test']):
+                        # Check for duplicates
+                        if site_id in seen_site_ids:
+                            filtering_stats["duplicates"] += 1
+                            logger.debug(f"Skipping duplicate site: {site_data.get('displayName', 'Unknown')} (ID: {site_id})")
                             continue
 
-                        filtered_sites.append(site)
+                        # Additional validation for personal sites (edge case protection)
+                        if any(pattern in site_url for pattern in ['/personal/', '-my.sharepoint.com']):
+                            filtering_stats["personal_sites"] += 1
+                            logger.debug(f"Filtering out personal site: {site_data.get('displayName', 'Unknown')}")
+                            continue
 
-                    result['value'] = filtered_sites
-                    logger.info(f"Client-side filtering: {len(filtered_sites)} sites after filtering")
-                    return result
+                        # Additional validation for system sites
+                        if any(pattern in site_url for pattern in ['/appcatalog/', '/sites/appcatalog']):
+                            filtering_stats["system_sites"] += 1
+                            logger.debug(f"Filtering out system site: {site_data.get('displayName', 'Unknown')}")
+                            continue
 
-                if search_result and 'value' in search_result and len(search_result['value']) > 0:
-                    hits = search_result['value'][0].get('hitsContainers', [])
+                        # Additional naming pattern validation (edge case protection)
+                        if any(pattern in site_name for pattern in [
+                            'archived', '_archive', 'test-', '_test', 'demo-', '_demo',
+                            'old-', '_old', 'backup', '_backup', 'teamchannel', 'template'
+                        ]):
+                            filtering_stats["naming_pattern_filtered"] += 1
+                            logger.debug(f"Filtering out by naming pattern: {site_data.get('displayName', 'Unknown')}")
+                            continue
 
-                    for container in hits:
-                        for hit in container.get('hits', []):
-                            resource = hit.get('resource', {})
-                            # Convert search result to match delta format
-                            site_data = {
-                                'id': resource.get('id', ''),
-                                'webUrl': resource.get('webUrl', ''),
-                                'displayName': resource.get('displayName', resource.get('name', '')),
-                                'name': resource.get('name', ''),
-                                'createdDateTime': resource.get('createdDateTime'),
-                                'lastModifiedDateTime': resource.get('lastModifiedDateTime')
-                            }
+                        # Site passed all filters
+                        seen_site_ids.add(site_id)
+                        all_active_sites.append(site_data)
 
-                            # Additional filtering based on patterns
-                            site_url = site_data.get('webUrl', '')
-                            site_name = site_data.get('displayName', '')
-                            name_lower = site_name.lower()
+                    # Check for more results in this container
+                    if container.get('moreResultsAvailable', False):
+                        # Update pagination
+                        search_body['requests'][0]['from'] += search_body['requests'][0]['size']
+                        logger.debug(f"More results available, setting next from to: {search_body['requests'][0]['from']}")
+                    else:
+                        logger.debug("No more results available in container")
+                        found_results_in_page = False
+                        break
 
-                            # Skip system/test/archived sites based on naming patterns
-                            if any(pattern in name_lower for pattern in ['archived', 'test-', 'demo-', 'old-', '_archive', '_test', 'teamchannel']):
-                                logger.debug(f"Skipping site based on naming pattern: {site_name}")
-                                continue
+                # If no results found in this page, we're done
+                if not found_results_in_page:
+                    logger.debug("No results found in page, ending pagination")
+                    break
 
-                            # Skip app catalog and other system sites
-                            if any(pattern in site_url.lower() for pattern in ['/appcatalog/', '/sites/appcatalog', '-my.sharepoint.com']):
-                                logger.debug(f"Skipping system site: {site_name}")
-                                continue
+                # Safety limit to prevent excessive API calls
+                if len(all_active_sites) >= 5000:
+                    logger.warning(f"Reached safety limit of 5000 sites (API calls: {api_calls_made})")
+                    break
 
-                            # Skip duplicates
-                            site_id = site_data.get('id', '')
-                            if site_id and site_id in seen_site_ids:
-                                logger.debug(f"Skipping duplicate site: {site_name} (ID: {site_id})")
-                                continue
+                if api_calls_made >= 20:  # Reasonable limit for API calls
+                    logger.warning(f"Reached API call limit of 20 (sites found: {len(all_active_sites)})")
+                    break
 
-                            if site_id:
-                                seen_site_ids.add(site_id)
+            except Exception as e:
+                logger.error(f"Search API call #{api_calls_made} failed: {e}")
 
-                            all_active_sites.append(site_data)
-
-                        # Check if there are more results
-                        if container.get('moreResultsAvailable', False):
-                            # Update the from parameter for next page
-                            search_body['requests'][0]['from'] += search_body['requests'][0]['size']
-                        else:
-                            # No more results, exit loop
-                            break
+                # If this is the first call, fall back to delta API with client-side filtering
+                if api_calls_made == 1:
+                    logger.warning("Search API completely failed, falling back to delta API with client-side filtering")
+                    return await self._fallback_to_delta_with_filtering()
                 else:
+                    # If we've already got some results, continue with what we have
+                    logger.warning(f"Search API failed after {api_calls_made} calls, using {len(all_active_sites)} sites collected so far")
                     break
 
-                # Limit total results to prevent excessive API calls
-                if len(all_active_sites) >= 2000:
-                    logger.warning("Reached maximum site limit of 2000")
-                    break
+        # Calculate performance metrics
+        elapsed_time = time.time() - start_time
+        total_filtered_out = sum(filtering_stats.values())
 
-            logger.info(f"Search API returned {len(all_active_sites)} active sites (excludes archived by default)")
+        # Log comprehensive filtering statistics
+        logger.info(f"Optimized Search API completed in {elapsed_time:.2f}s:")
+        logger.info(f"  - API calls made: {api_calls_made}")
+        logger.info(f"  - Active sites found: {len(all_active_sites)}")
+        logger.info(f"  - Sites filtered out: {total_filtered_out}")
+        logger.info(f"    * Personal sites: {filtering_stats['personal_sites']}")
+        logger.info(f"    * Archived sites: {filtering_stats['archived_sites']}")
+        logger.info(f"    * System sites: {filtering_stats['system_sites']}")
+        logger.info(f"    * Naming patterns: {filtering_stats['naming_pattern_filtered']}")
+        logger.info(f"    * Duplicates: {filtering_stats['duplicates']}")
+        logger.info(f"  - Average sites per API call: {len(all_active_sites) / max(api_calls_made, 1):.1f}")
 
-            # Replace the delta results with search results
-            result['value'] = all_active_sites
-            # Remove delta token since we're using search instead
-            if '@odata.deltaLink' in result:
-                del result['@odata.deltaLink']
+        # Return in delta API compatible format
+        result = {
+            'value': all_active_sites,
+            # Don't include delta token since we're using search
+            '@odata.context': 'https://graph.microsoft.com/v1.0/$metadata#sites',
+            '_search_metadata': {
+                'elapsed_time': elapsed_time,
+                'api_calls_made': api_calls_made,
+                'filtering_stats': filtering_stats,
+                'query_used': query_string
+            }
+        }
 
         return result
+
+    async def _fallback_to_delta_with_filtering(self) -> Any:
+        """Fallback method when Search API fails - uses delta API with client-side filtering."""
+        logger.info("Executing fallback: Delta API with enhanced client-side filtering")
+        start_time = time.time()
+
+        try:
+            # Get all sites via delta API
+            url = "https://graph.microsoft.com/v1.0/sites/delta"
+            result = await self.get_with_retry(url)
+
+            if not isinstance(result, dict) or 'value' not in result:
+                logger.error("Invalid response from delta API")
+                return {'value': []}
+
+            all_sites = result['value']
+            logger.info(f"Delta API returned {len(all_sites)} total sites")
+
+            # Apply comprehensive client-side filtering
+            filtered_sites = []
+            filtering_stats = {
+                "personal_sites": 0,
+                "archived_sites": 0,
+                "system_sites": 0,
+                "naming_pattern_filtered": 0,
+                "template_filtered": 0,
+                "old_sites": 0
+            }
+
+            # Current date for age-based filtering
+            one_year_ago = datetime.now(timezone.utc).replace(year=datetime.now().year - 1)
+
+            for site in all_sites:
+                site_url = site.get('webUrl', '').lower()
+                site_name = site.get('displayName', site.get('name', '')).lower()
+
+                # Filter out personal sites (OneDrive)
+                if any(pattern in site_url for pattern in ['/personal/', '-my.sharepoint.com']):
+                    filtering_stats["personal_sites"] += 1
+                    continue
+
+                # Filter out archived sites
+                if site.get('isArchived', False):
+                    filtering_stats["archived_sites"] += 1
+                    continue
+
+                # Filter out system sites
+                if any(pattern in site_url for pattern in ['/appcatalog/', '/sites/appcatalog']):
+                    filtering_stats["system_sites"] += 1
+                    continue
+
+                # Filter by naming patterns
+                if any(pattern in site_name for pattern in [
+                    'archived', '_archive', 'test-', '_test', 'demo-', '_demo',
+                    'old-', '_old', 'backup', '_backup', 'template'
+                ]):
+                    filtering_stats["naming_pattern_filtered"] += 1
+                    continue
+
+                # Filter by site template (if available)
+                web_template = site.get('webTemplate', '').upper()
+                if web_template in ['SPSMSITEHOST', 'REDIRECTSITE', 'TEAMCHANNEL#1', 'APPCATALOG#0']:
+                    filtering_stats["template_filtered"] += 1
+                    continue
+
+                # Filter by last modified date (sites not modified in over a year)
+                if 'lastModifiedDateTime' in site:
+                    try:
+                        last_modified = datetime.fromisoformat(site['lastModifiedDateTime'].replace('Z', '+00:00'))
+                        if last_modified < one_year_ago:
+                            filtering_stats["old_sites"] += 1
+                            continue
+                    except (ValueError, TypeError):
+                        # If we can't parse the date, include the site
+                        pass
+
+                # Site passed all filters
+                filtered_sites.append(site)
+
+            elapsed_time = time.time() - start_time
+            total_filtered_out = sum(filtering_stats.values())
+
+            # Log filtering results
+            logger.info(f"Client-side filtering completed in {elapsed_time:.2f}s:")
+            logger.info(f"  - Total sites processed: {len(all_sites)}")
+            logger.info(f"  - Active sites found: {len(filtered_sites)}")
+            logger.info(f"  - Sites filtered out: {total_filtered_out}")
+            logger.info(f"    * Personal sites: {filtering_stats['personal_sites']}")
+            logger.info(f"    * Archived sites: {filtering_stats['archived_sites']}")
+            logger.info(f"    * System sites: {filtering_stats['system_sites']}")
+            logger.info(f"    * Naming patterns: {filtering_stats['naming_pattern_filtered']}")
+            logger.info(f"    * Templates: {filtering_stats['template_filtered']}")
+            logger.info(f"    * Old sites (1+ year): {filtering_stats['old_sites']}")
+
+            # Update result with filtered sites and remove pagination links
+            result['value'] = filtered_sites
+
+            # CRITICAL FIX: Remove pagination links to prevent discovery module
+            # from continuing to fetch unfiltered pages
+            if '@odata.nextLink' in result:
+                del result['@odata.nextLink']
+                logger.info("Removed @odata.nextLink to prevent unfiltered pagination")
+
+            if '@odata.deltaLink' in result:
+                del result['@odata.deltaLink']
+                logger.info("Removed @odata.deltaLink to prevent unfiltered pagination")
+
+            result['_fallback_metadata'] = {
+                'elapsed_time': elapsed_time,
+                'filtering_stats': filtering_stats,
+                'fallback_reason': 'Search API failed',
+                'pagination_removed': True,
+                'is_complete_result': True
+            }
+
+            logger.info(f"Fallback filtering complete: returning {len(filtered_sites)} sites with no pagination")
+            return result
+
+        except Exception as e:
+            logger.error(f"Fallback filtering failed: {e}")
+            # Return empty result rather than failing completely
+            return {
+                'value': [],
+                '_error_metadata': {
+                    'error': str(e),
+                    'fallback_failed': True
+                }
+            }
 
     async def expand_group_members_transitive(self, group_id: str) -> list[dict[str, Any]]:
         """
@@ -371,11 +607,30 @@ class GraphAPIClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create the aiohttp session."""
-        if self._session is None or self._session.closed:
+        # Simple approach: always create new session if current one is None or closed
+        if self._session is None:
             self._session = aiohttp.ClientSession()
+        else:
+            # Check if session is closed using try/catch for robustness
+            try:
+                # Try to access the closed property - handle any exceptions gracefully
+                if getattr(self._session, 'closed', True):  # Default to True if attribute doesn't exist
+                    self._session = aiohttp.ClientSession()
+            except Exception:
+                # If any error accessing session state, create new session
+                self._session = aiohttp.ClientSession()
+
         return self._session
 
     async def close(self) -> None:
         """Close the aiohttp session."""
-        if self._session and not self._session.closed:
-            await self._session.close()
+        if self._session:
+            try:
+                # Only close if not already closed
+                if not getattr(self._session, 'closed', True):
+                    await self._session.close()
+            except Exception:
+                # Ignore any errors during close
+                pass
+            finally:
+                self._session = None

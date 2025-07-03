@@ -1,0 +1,309 @@
+{
+  "timestamp": "2025-07-03T12:30:11.240531",
+  "api_calls": [
+    {
+      "timestamp": 1751571011.24086,
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/search/query",
+      "elapsed_time": 0.5410349369049072,
+      "success": true,
+      "request_body": {
+        "requests": [
+          {
+            "entityTypes": [
+              "site"
+            ],
+            "query": {
+              "queryString": "contentclass:STS_Site AND NOT path:*/personal/* AND NOT IsArchived:true AND NOT WebTemplate:SPSMSITEHOST AND NOT WebTemplate:RedirectSite AND NOT path:*/appcatalog/* AND NOT displayName:*archived* AND NOT displayName:*test* AND NOT displayName:*demo* AND NOT displayName:*old* AND NOT displayName:*backup*"
+            },
+            "from": 0,
+            "size": 500,
+            "sortProperties": [
+              {
+                "name": "lastModifiedTime",
+                "isDescending": true
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": 1751571011.7820249,
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/sites/delta",
+      "elapsed_time": 0.00018525123596191406,
+      "success": true,
+      "response_size": 0
+    },
+    {
+      "timestamp": 1751571011.7822468,
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/search/query",
+      "elapsed_time": 0.000141143798828125,
+      "success": true,
+      "request_body": {
+        "requests": [
+          {
+            "entityTypes": [
+              "site"
+            ],
+            "query": {
+              "queryString": "NOT path:*/personal/* AND NOT displayName:*archived* AND NOT displayName:*test* AND NOT displayName:*old*"
+            },
+            "from": 0,
+            "size": 10,
+            "fields": [
+              "id",
+              "webUrl",
+              "displayName",
+              "description",
+              "createdDateTime",
+              "lastModifiedDateTime"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": 1751571011.7824152,
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/search/query",
+      "elapsed_time": 0.0001049041748046875,
+      "success": true,
+      "request_body": {
+        "requests": [
+          {
+            "entityTypes": [
+              "site"
+            ],
+            "query": {
+              "queryString": "NOT path:*/personal/* AND NOT path:*/appcatalog/* AND NOT displayName:*archived* AND NOT displayName:*test* AND NOT displayName:*demo* AND NOT displayName:*old* AND NOT displayName:*backup*"
+            },
+            "from": 0,
+            "size": 10,
+            "fields": [
+              "id",
+              "webUrl",
+              "displayName",
+              "description",
+              "createdDateTime",
+              "lastModifiedDateTime"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": 1751571011.782536,
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/search/query",
+      "elapsed_time": 0.00010585784912109375,
+      "success": true,
+      "request_body": {
+        "requests": [
+          {
+            "entityTypes": [
+              "site"
+            ],
+            "query": {
+              "queryString": "contentClass:STS_Site AND NOT path:*/personal/* AND NOT displayName:*archived*"
+            },
+            "from": 0,
+            "size": 10,
+            "fields": [
+              "id",
+              "webUrl",
+              "displayName",
+              "description",
+              "createdDateTime",
+              "lastModifiedDateTime"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": 1751571011.782698,
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/sites?$filter=isArchived eq false&$top=10",
+      "elapsed_time": 0.0002181529998779297,
+      "success": true,
+      "response_size": 0
+    },
+    {
+      "timestamp": 1751571011.7829309,
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/sites?$filter=deleted eq null&$top=10",
+      "elapsed_time": 0.0002791881561279297,
+      "success": true,
+      "response_size": 0
+    },
+    {
+      "timestamp": 1751571011.783225,
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/sites?$filter=not(startswith(displayName,'archived'))&$top=10",
+      "elapsed_time": 0.00018787384033203125,
+      "success": true,
+      "response_size": 0
+    },
+    {
+      "timestamp": 1751571011.783427,
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/sites?$filter=not(startswith(displayName,'test'))&$top=10",
+      "elapsed_time": 0.0002269744873046875,
+      "success": true,
+      "response_size": 0
+    },
+    {
+      "timestamp": 1751571011.78367,
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/sites?$filter=not(startswith(displayName,'archived')) and not(startswith(displayName,'test'))&$top=10",
+      "elapsed_time": 0.00018215179443359375,
+      "success": true,
+      "response_size": 0
+    },
+    {
+      "timestamp": 1751571011.783875,
+      "method": "POST",
+      "url": "https://graph.microsoft.com/v1.0/search/query",
+      "elapsed_time": 9.822845458984375e-05,
+      "success": true,
+      "request_body": {
+        "requests": [
+          {
+            "entityTypes": [
+              "site"
+            ],
+            "query": {
+              "queryString": "NOT path:*/personal/*"
+            },
+            "from": 0,
+            "size": 10,
+            "fields": [
+              "id",
+              "webUrl",
+              "displayName",
+              "description",
+              "createdDateTime",
+              "lastModifiedDateTime"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "timestamp": 1751571011.784016,
+      "method": "GET",
+      "url": "https://graph.microsoft.com/v1.0/sites/delta?$top=10&$select=*",
+      "elapsed_time": 0.00020503997802734375,
+      "success": true,
+      "response_size": 0
+    }
+  ],
+  "current_approach": {
+    "method": "Delta API + Search API fallback + client-side filtering",
+    "sites_returned": 0,
+    "elapsed_time": 0.5411810874938965,
+    "api_calls_made": 1,
+    "sample_sites": [],
+    "all_sites_count": 0,
+    "all_sites_time": 0.00020313262939453125
+  },
+  "proposed_approaches": {
+    "enhanced_search_api": {
+      "method": "Enhanced Search API with OData filtering",
+      "queries_tested": 3,
+      "results": {
+        "query_1": {
+          "query": "NOT path:*/personal/* AND NOT displayName:*archived* AND NOT displayName:*test* AND NOT displayName:*old*",
+          "sites_found": 0,
+          "elapsed_time": 0.00014495849609375,
+          "sample_sites": []
+        },
+        "query_2": {
+          "query": "NOT path:*/personal/* AND NOT path:*/appcatalog/* AND NOT displayName:*archived* AND NOT displayName:*test* AND NOT displayName:*demo* AND NOT displayName:*old* AND NOT displayName:*backup*",
+          "sites_found": 0,
+          "elapsed_time": 0.0001068115234375,
+          "sample_sites": []
+        },
+        "query_3": {
+          "query": "contentClass:STS_Site AND NOT path:*/personal/* AND NOT displayName:*archived*",
+          "sites_found": 0,
+          "elapsed_time": 0.00010919570922851562,
+          "sample_sites": []
+        }
+      },
+      "total_elapsed_time": 0.00043487548828125,
+      "api_calls_made": 3
+    },
+    "sites_endpoint_filtering": {
+      "method": "Sites endpoint with OData filters",
+      "filters_tested": 5,
+      "results": {
+        "filter_1": {
+          "filter": "$filter=isArchived eq false",
+          "sites_found": 0,
+          "elapsed_time": 0.00022101402282714844,
+          "sample_sites": []
+        },
+        "filter_2": {
+          "filter": "$filter=deleted eq null",
+          "sites_found": 0,
+          "elapsed_time": 0.00028204917907714844,
+          "sample_sites": []
+        },
+        "filter_3": {
+          "filter": "$filter=not(startswith(displayName,'archived'))",
+          "sites_found": 0,
+          "elapsed_time": 0.0001900196075439453,
+          "sample_sites": []
+        },
+        "filter_4": {
+          "filter": "$filter=not(startswith(displayName,'test'))",
+          "sites_found": 0,
+          "elapsed_time": 0.0002288818359375,
+          "sample_sites": []
+        },
+        "filter_5": {
+          "filter": "$filter=not(startswith(displayName,'archived')) and not(startswith(displayName,'test'))",
+          "sites_found": 0,
+          "elapsed_time": 0.00018405914306640625,
+          "sample_sites": []
+        }
+      },
+      "total_elapsed_time": 0.0011692047119140625,
+      "api_calls_made": 5
+    },
+    "combined_approach": {
+      "method": "Search API + detailed property validation",
+      "candidate_sites_found": 0,
+      "detailed_sites_analyzed": 0,
+      "estimated_active_sites": 0,
+      "elapsed_time": 0.00011491775512695312,
+      "api_calls_made": 1,
+      "sample_detailed_sites": []
+    }
+  },
+  "site_samples": [],
+  "performance_metrics": {
+    "current_implementation": {
+      "api_calls": 1,
+      "elapsed_time": 0.5411810874938965,
+      "sites_per_second": 0.0
+    },
+    "enhanced_search_api": {
+      "api_calls": 3,
+      "elapsed_time": 0.00043487548828125,
+      "estimated_efficiency_gain": 99.91964325836014
+    },
+    "combined_approach": {
+      "api_calls": 1,
+      "elapsed_time": 0.00011491775512695312,
+      "estimated_efficiency_gain": 99.97876537857981
+    }
+  },
+  "recommendations": [
+    "Enhanced Search API could improve performance by 99.9%"
+  ]
+}

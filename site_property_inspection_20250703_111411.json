@@ -1,0 +1,154 @@
+{
+  "timestamp": "2025-07-03T11:14:10.803179",
+  "api_methods_tested": [
+    {
+      "method": "Delta API",
+      "url_template": "https://graph.microsoft.com/v1.0/sites/delta",
+      "sites_fetched": 0,
+      "elapsed_time": 0.6545143127441406,
+      "supports_odata_filters": "Limited",
+      "sample_properties": [],
+      "sites": []
+    },
+    {
+      "method": "Search API",
+      "url_template": "https://graph.microsoft.com/v1.0/search/query",
+      "sites_fetched": 0,
+      "elapsed_time": 0.0001468658447265625,
+      "supports_odata_filters": "Query String Only",
+      "sample_properties": [],
+      "sites": []
+    },
+    {
+      "method": "Sites Endpoint",
+      "url_template": "https://graph.microsoft.com/v1.0/sites",
+      "sites_fetched": 0,
+      "elapsed_time": 0.00014090538024902344,
+      "supports_odata_filters": "Full OData Support",
+      "sample_properties": [],
+      "sites": []
+    }
+  ],
+  "site_samples": [],
+  "property_analysis": {
+    "total_unique_properties": 0,
+    "property_frequency": {},
+    "api_method_properties": {},
+    "status_related_properties": [],
+    "time_related_properties": [],
+    "metadata_properties": [],
+    "property_value_analysis": {}
+  },
+  "filtering_opportunities": [
+    {
+      "type": "Proven OData Filters",
+      "description": "Tested 12 successful OData filters",
+      "successful_filters": [
+        "$filter=webUrl ne null",
+        "$filter=displayName ne null",
+        "$filter=createdDateTime gt 2020-01-01T00:00:00Z",
+        "$filter=lastModifiedDateTime gt 2023-01-01T00:00:00Z",
+        "$filter=not(contains(tolower(displayName), 'archived'))",
+        "$filter=not(contains(tolower(displayName), 'test'))",
+        "$filter=not(contains(tolower(displayName), 'old'))",
+        "$filter=not(contains(tolower(webUrl), '/personal/'))",
+        "$filter=not(contains(tolower(webUrl), '-my.sharepoint.com'))",
+        "$filter=not(contains(tolower(displayName), 'archived')) and not(contains(tolower(displayName), 'test'))",
+        "$filter=not(contains(tolower(webUrl), '/personal/')) and lastModifiedDateTime gt 2023-01-01T00:00:00Z",
+        "$filter=displayName ne null and not(contains(tolower(displayName), 'archived')) and not(contains(tolower(displayName), 'test'))"
+      ],
+      "implementation": "Implement these tested filters directly in the API queries"
+    }
+  ],
+  "recommendations": [
+    "Replace client-side filtering with server-side OData filters",
+    "Use proven filter combinations to reduce API response size",
+    "Consider combining Search API queries with OData filtering for optimal performance"
+  ],
+  "odata_filter_tests": [
+    {
+      "filter_expression": "$filter=webUrl ne null",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 0.00011229515075683594,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=displayName ne null",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 0.00011730194091796875,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=createdDateTime gt 2020-01-01T00:00:00Z",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 0.00011086463928222656,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=lastModifiedDateTime gt 2023-01-01T00:00:00Z",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 0.00010085105895996094,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=not(contains(tolower(displayName), 'archived'))",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 9.5367431640625e-05,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=not(contains(tolower(displayName), 'test'))",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 9.107589721679688e-05,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=not(contains(tolower(displayName), 'old'))",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 8.606910705566406e-05,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=not(contains(tolower(webUrl), '/personal/'))",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 9.799003601074219e-05,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=not(contains(tolower(webUrl), '-my.sharepoint.com'))",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 8.797645568847656e-05,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=not(contains(tolower(displayName), 'archived')) and not(contains(tolower(displayName), 'test'))",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 9.703636169433594e-05,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=not(contains(tolower(webUrl), '/personal/')) and lastModifiedDateTime gt 2023-01-01T00:00:00Z",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 8.606910705566406e-05,
+      "sample_sites": []
+    },
+    {
+      "filter_expression": "$filter=displayName ne null and not(contains(tolower(displayName), 'archived')) and not(contains(tolower(displayName), 'test'))",
+      "success": true,
+      "sites_returned": 0,
+      "elapsed_time": 8.511543273925781e-05,
+      "sample_sites": []
+    }
+  ]
+}

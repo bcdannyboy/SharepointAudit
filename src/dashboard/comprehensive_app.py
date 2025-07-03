@@ -33,6 +33,15 @@ if 'selected_tab' not in st.session_state:
     st.session_state.selected_tab = "Overview"
 
 # Helper functions for data enrichment
+def _safe_object_id_to_int(object_id):
+    """Safely convert object_id (which may be a composite SharePoint ID) to integer for indexing purposes."""
+    if object_id is None:
+        return 0
+
+    # Convert to string and use hash to get a consistent integer
+    # Use abs() to ensure positive number and modulo to keep it reasonable
+    return abs(hash(str(object_id))) % (10**9)
+
 def _generate_object_name(row, files_df, folders_df, libraries_df, sites_df):
     """Generate a meaningful object name based on object type"""
     obj_type = row['object_type']
@@ -44,7 +53,7 @@ def _generate_object_name(row, files_df, folders_df, libraries_df, sites_df):
             # Sample some real file names and use them as templates
             sample_names = files_df['name'].dropna().unique()[:20]
             if len(sample_names) > 0:
-                idx = int(obj_id) % len(sample_names)
+                idx = _safe_object_id_to_int(obj_id) % len(sample_names)
                 base_name = sample_names[idx]
                 # Modify the name to include the object ID to make it unique
                 name_parts = base_name.rsplit('.', 1)
@@ -55,30 +64,30 @@ def _generate_object_name(row, files_df, folders_df, libraries_df, sites_df):
         # Fallback to generated names
         file_types = ['Budget Report', 'Project Plan', 'Meeting Notes', 'Requirements Doc', 'Design Spec', 'Status Update']
         extensions = ['.docx', '.xlsx', '.pptx', '.pdf', '.csv', '.txt']
-        idx = int(obj_id) % len(file_types)
-        ext_idx = int(obj_id) % len(extensions)
+        idx = _safe_object_id_to_int(obj_id) % len(file_types)
+        ext_idx = _safe_object_id_to_int(obj_id) % len(extensions)
         return f"{file_types[idx]}_{obj_id}{extensions[ext_idx]}"
 
     elif obj_type == 'folder':
         if not folders_df.empty:
             sample_names = folders_df['name'].dropna().unique()[:10]
             if len(sample_names) > 0:
-                idx = int(obj_id) % len(sample_names)
+                idx = _safe_object_id_to_int(obj_id) % len(sample_names)
                 return f"{sample_names[idx]}_{obj_id}"
 
         folder_names = ['Documents', 'Reports', 'Shared Files', 'Archives', 'Project Files', 'Team Resources']
-        idx = int(obj_id) % len(folder_names)
+        idx = _safe_object_id_to_int(obj_id) % len(folder_names)
         return f"{folder_names[idx]}_{obj_id}"
 
     elif obj_type == 'library':
         if not libraries_df.empty:
             sample_names = libraries_df['name'].dropna().unique()
             if len(sample_names) > 0:
-                idx = int(obj_id) % len(sample_names)
+                idx = _safe_object_id_to_int(obj_id) % len(sample_names)
                 return sample_names[idx]
 
         library_names = ['Documents', 'Site Assets', 'Site Pages', 'Form Templates', 'Style Library']
-        idx = int(obj_id) % len(library_names)
+        idx = _safe_object_id_to_int(obj_id) % len(library_names)
         return library_names[idx]
 
     elif obj_type == 'site':
@@ -87,7 +96,7 @@ def _generate_object_name(row, files_df, folders_df, libraries_df, sites_df):
             sample_urls = sites_df['url'].dropna().unique()
             if len(sample_urls) > 0:
                 # Use actual site URLs but modify slightly for variety
-                idx = int(obj_id) % len(sample_urls)
+                idx = _safe_object_id_to_int(obj_id) % len(sample_urls)
                 base_url = sample_urls[idx]
                 return base_url
         return f"https://sharepoint.com/sites/Site_{obj_id}"
@@ -116,7 +125,7 @@ def _generate_file_size(row):
     """Generate realistic file sizes for files"""
     if row['object_type'] == 'file':
         # Generate realistic file sizes based on object ID
-        obj_id = int(row['object_id'])
+        obj_id = _safe_object_id_to_int(row['object_id'])
 
         # Different size ranges for different file types
         if row['file_extension'] in ['.pdf', '.docx', '.pptx']:
@@ -208,7 +217,7 @@ def load_permissions_data(db_path: str) -> pd.DataFrame:
 
             # Enrich the dataframe
             # Assign site URLs based on object ID for variety
-            df['site_url'] = df.apply(lambda row: site_urls[int(row['object_id']) % len(site_urls)], axis=1)
+            df['site_url'] = df.apply(lambda row: site_urls[_safe_object_id_to_int(row['object_id']) % len(site_urls)], axis=1)
             df['site_title'] = df['site_url'].apply(lambda url: url.split('/')[-1] if '/' in url else 'SharePoint Site')
 
             # Create meaningful object names based on type
