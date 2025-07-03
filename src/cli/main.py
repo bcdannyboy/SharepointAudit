@@ -3,11 +3,11 @@
 import click
 
 # Import dashboard separately to avoid import issues
-from .dashboard_command import dashboard
+from cli.dashboard_command import dashboard
 
 # Import commands
 try:
-    from .commands import audit, backup, restore, health
+    from cli.commands import audit, backup, restore, health
 except ImportError as e:
     # If there's an import error, use the simple fallback
     import traceback
@@ -16,7 +16,7 @@ except ImportError as e:
     traceback.print_exc()
 
     # Fallback to simple audit implementation
-    from .simple_audit import audit
+    from cli.simple_audit import audit
 
     # Create fallback commands
     @click.command()

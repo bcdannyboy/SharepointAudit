@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from .output import RichOutput
+from cli.output import RichOutput
 
 
 @click.command()

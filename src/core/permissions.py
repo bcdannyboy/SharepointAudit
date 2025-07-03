@@ -7,13 +7,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
-from src.api.graph_client import GraphAPIClient
-from src.api.sharepoint_client import SharePointAPIClient
-from src.database.repository import DatabaseRepository
-from src.cache.cache_manager import CacheManager
+from api.graph_client import GraphAPIClient
+from api.sharepoint_client import SharePointAPIClient
+from database.repository import DatabaseRepository
+from cache.cache_manager import CacheManager
 from .concurrency import ConcurrencyManager
-from src.utils.exceptions import SharePointAPIError
-from src.utils.retry_handler import RetryStrategy, RetryConfig
+from utils.exceptions import SharePointAPIError
+from utils.retry_handler import RetryStrategy, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +232,14 @@ class PermissionAnalyzer:
                             or item.get("folder_id")
                         )
                         if library_id and item_id:
+                            # DIAGNOSTIC LOGGING for HTTP 400 debugging
+                            logger.info(f"DIAGNOSTIC: _check_has_unique_permissions called")
+                            logger.info(f"DIAGNOSTIC: item_type = {item_type}")
+                            logger.info(f"DIAGNOSTIC: item_id = {item_id} (type: {type(item_id)})")
+                            logger.info(f"DIAGNOSTIC: library_id = {library_id}")
+                            logger.info(f"DIAGNOSTIC: site_url = {site_url}")
+                            logger.info(f"DIAGNOSTIC: Converting item_id to int: {int(item_id)}")
+
                             has_unique = await self.sp_client.check_unique_permissions(
                                 site_url, library_id, int(item_id)
                             )
@@ -285,6 +293,15 @@ class PermissionAnalyzer:
                     # Convert item_id to int if it's numeric
                     try:
                         item_id_int = int(item_id)
+                        # DIAGNOSTIC LOGGING for HTTP 400 debugging
+                        logger.info(f"DIAGNOSTIC: _get_unique_permissions called")
+                        logger.info(f"DIAGNOSTIC: item_type = {item_type}")
+                        logger.info(f"DIAGNOSTIC: Original item_id = {item_id} (type: {type(item_id)})")
+                        logger.info(f"DIAGNOSTIC: Converted item_id_int = {item_id_int} (type: {type(item_id_int)})")
+                        logger.info(f"DIAGNOSTIC: library_id = {library_id}")
+                        logger.info(f"DIAGNOSTIC: site_url = {site_url}")
+                        logger.info(f"DIAGNOSTIC: Full item dict = {item}")
+
                         logger.debug(
                             f"Getting {item_type} permissions for library_id: {library_id}, item_id: {item_id_int}"
                         )
@@ -296,8 +313,11 @@ class PermissionAnalyzer:
                         logger.debug(
                             f"{item_type} permissions response: {len(role_assignments)} role assignments"
                         )
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError) as e:
                         # If item_id is not numeric, try as string
+                        logger.error(f"DIAGNOSTIC: Failed to convert item_id to int")
+                        logger.error(f"DIAGNOSTIC: item_id = {item_id} (type: {type(item_id)})")
+                        logger.error(f"DIAGNOSTIC: Conversion error: {e}")
                         logger.warning(
                             f"Item ID {item_id} is not numeric, skipping permissions"
                         )

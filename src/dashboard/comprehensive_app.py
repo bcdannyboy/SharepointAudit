@@ -15,8 +15,8 @@ from typing import Dict, List, Optional, Any
 import numpy as np
 
 # Import local modules
-from src.database.repository import DatabaseRepository
-from src.dashboard.utils import format_bytes, format_number
+from database.repository import DatabaseRepository
+from dashboard.utils import format_bytes, format_number
 
 # Page configuration
 st.set_page_config(

@@ -11,7 +11,7 @@ parent_dir = Path(__file__).parent.parent.parent.parent
 if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
-from src.database.repository import DatabaseRepository
+from database.repository import DatabaseRepository
 
 
 @st.cache_data(ttl=60)

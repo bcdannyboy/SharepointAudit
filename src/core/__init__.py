@@ -1,8 +1,8 @@
 """Core module containing the main audit engine components."""
 
-from .pipeline import AuditPipeline, PipelineContext, PipelineStage, ParallelProcessor
-from .pipeline_metrics import PipelineMetrics
-from .processors import (
+from core.pipeline import AuditPipeline, PipelineContext, PipelineStage, ParallelProcessor
+from core.pipeline_metrics import PipelineMetrics
+from core.processors import (
     DiscoveryStage,
     ValidationStage,
     TransformationStage,
@@ -12,9 +12,9 @@ from .processors import (
     ProcessingResult,
     PermissionAnalysisStage
 )
-from .progress_tracker import ProgressTracker
-from .discovery import DiscoveryModule
-from .models import (
+from core.progress_tracker import ProgressTracker
+from core.discovery import DiscoveryModule
+from core.models import (
     AuditItem,
     Site,
     Library,

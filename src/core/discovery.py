@@ -8,14 +8,14 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from src.api.graph_client import GraphAPIClient
-from src.api.sharepoint_client import SharePointAPIClient
-from src.database.repository import DatabaseRepository
-from src.cache.cache_manager import CacheManager
-from src.core.progress_tracker import ProgressTracker
-from src.utils.checkpoint_manager import CheckpointManager
-from .concurrency import ConcurrencyManager
-from .discovery_queue_based import QueueBasedDiscovery
+from api.graph_client import GraphAPIClient
+from api.sharepoint_client import SharePointAPIClient
+from database.repository import DatabaseRepository
+from cache.cache_manager import CacheManager
+from core.progress_tracker import ProgressTracker
+from utils.checkpoint_manager import CheckpointManager
+from core.concurrency import ConcurrencyManager
+from core.discovery_queue_based import QueueBasedDiscovery
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class DiscoveryModule(QueueBasedDiscovery):
         cache: Optional[CacheManager] = None,
         checkpoints: Optional[CheckpointManager] = None,
         max_concurrent_operations: int = 50,
+        active_only: bool = False,
     ):
         self.graph_client = graph_client
         self.sp_client = sp_client
@@ -38,6 +39,7 @@ class DiscoveryModule(QueueBasedDiscovery):
         self.cache = cache
         self.checkpoints = checkpoints or CheckpointManager(db_repo)
         self.progress_tracker = ProgressTracker()
+        self.active_only = active_only
 
         # Concurrency control
         self.concurrency_manager = ConcurrencyManager(max_concurrent_operations)
@@ -66,7 +68,14 @@ class DiscoveryModule(QueueBasedDiscovery):
             if sites_to_process:
                 # Filter to specific sites if requested using exact matching
                 def _normalize(url: str) -> str:
-                    return url.rstrip("/").lower()
+                    """Normalize URL for comparison by removing protocol and trailing slashes."""
+                    normalized = url.lower().rstrip("/")
+                    # Remove protocol prefixes
+                    if normalized.startswith("https://"):
+                        normalized = normalized[8:]
+                    elif normalized.startswith("http://"):
+                        normalized = normalized[7:]
+                    return normalized
 
                 normalized_filters = {_normalize(u) for u in sites_to_process}
 
@@ -138,11 +147,15 @@ class DiscoveryModule(QueueBasedDiscovery):
 
     async def discover_all_sites(self, run_id: str) -> List[Dict[str, Any]]:
         """Discover all SharePoint sites in the tenant using Graph API delta queries."""
-        logger.info("Starting site discovery")
+        # Log whether active-only filtering is enabled
+        if self.active_only:
+            logger.info("Starting site discovery with active-only filtering enabled")
+        else:
+            logger.info("Starting site discovery (all sites)")
 
         try:
             # Check for cached sites first
-            cache_key = "all_sites"
+            cache_key = f"all_sites_active_{self.active_only}"
             if self.cache:
                 cached_sites = await self.cache.get(cache_key)
                 if cached_sites:
@@ -156,38 +169,34 @@ class DiscoveryModule(QueueBasedDiscovery):
             if self.cache:
                 delta_token = await self.cache.get("sites_delta_token")
 
-            # Construct the appropriate URL
-            if delta_token:
-                # Use delta query with token
-                url = (
-                    f"https://graph.microsoft.com/v1.0/sites/delta?token={delta_token}"
-                )
-            else:
-                # Initial full sync
-                url = "https://graph.microsoft.com/v1.0/sites/delta"
+            # Use the graph client's get_all_sites_delta method which includes active filtering
+            data = await self._run_api_task(
+                self.graph_client.get_all_sites_delta(delta_token, active_only=self.active_only)
+            )
 
-            # Fetch sites with pagination
-            while url:
-                data = await self._run_api_task(self.graph_client.get_with_retry(url))
-
-                # Process sites
+            # Process sites with pagination
+            while data:
+                # Process sites from current page
                 for site_data in data.get("value", []):
                     if self._is_valid_site(site_data):
                         sites.append(site_data)
 
                 # Check for next page
-                url = data.get("@odata.nextLink")
-
-                # Save delta token if provided
-                if not url and "@odata.deltaLink" in data:
-                    delta_link = data["@odata.deltaLink"]
-                    if "token=" in delta_link:
-                        new_delta_token = delta_link.split("token=")[-1]
-                        if self.cache:
-                            await self.cache.set(
-                                "sites_delta_token", new_delta_token, ttl=86400
-                            )
-                        logger.info("Saved new delta token for incremental sync")
+                next_url = data.get("@odata.nextLink")
+                if next_url:
+                    data = await self._run_api_task(self.graph_client.get_with_retry(next_url))
+                else:
+                    # Save delta token if provided
+                    if "@odata.deltaLink" in data:
+                        delta_link = data["@odata.deltaLink"]
+                        if "token=" in delta_link:
+                            new_delta_token = delta_link.split("token=")[-1]
+                            if self.cache:
+                                await self.cache.set(
+                                    "sites_delta_token", new_delta_token, ttl=86400
+                                )
+                            logger.info("Saved new delta token for incremental sync")
+                    break
 
             # Save sites to database
             if sites:

@@ -11,8 +11,8 @@ if str(parent_dir) not in sys.path:
 # Import the comprehensive dashboard
 try:
     if __name__ == "__main__":
-        from src.dashboard.comprehensive_app import main as comprehensive_main
-        from src.dashboard.pages import overview, sites, permissions, files, export
+        from dashboard.comprehensive_app import main as comprehensive_main
+        from dashboard.pages import overview, sites, permissions, files, export
     else:
         from .comprehensive_app import main as comprehensive_main
         from .pages import overview, sites, permissions, files, export
@@ -21,7 +21,7 @@ except ImportError:
     USE_COMPREHENSIVE = False
     # Fallback to original pages
     if __name__ == "__main__":
-        from src.dashboard.pages import overview, sites, permissions, files, export
+        from dashboard.pages import overview, sites, permissions, files, export
     else:
         from .pages import overview, sites, permissions, files, export
 

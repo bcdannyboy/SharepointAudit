@@ -228,7 +228,8 @@ async def create_pipeline(config_path: str = "config/config.json",
         db_repo,
         cache=None,
         checkpoints=checkpoint_manager,
-        max_concurrent_operations=3  # Further reduced to prevent deadlock
+        max_concurrent_operations=3,  # Further reduced to prevent deadlock
+        active_only=active_only
     )
 
     # Set limit if provided

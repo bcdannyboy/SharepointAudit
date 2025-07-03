@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from ..database.repository import DatabaseRepository
+from database.repository import DatabaseRepository
 
 
 class CheckpointManager:

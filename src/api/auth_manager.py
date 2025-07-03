@@ -40,7 +40,7 @@ except Exception:  # pragma: no cover - fallback stub
             Token = namedtuple('Token', ['token', 'expires_on'])
             return Token(token="stub_token", expires_on=0)
 
-from ..utils.config_parser import AuthConfig
+from utils.config_parser import AuthConfig
 
 
 class AuthenticationManager:

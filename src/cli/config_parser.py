@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 import logging
 
-from ..utils.config_parser import load_config as load_base_config, AppConfig
+from utils.config_parser import load_config as load_base_config, AppConfig
 
 logger = logging.getLogger(__name__)
 

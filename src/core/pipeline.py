@@ -7,9 +7,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from ..database.repository import DatabaseRepository
-from ..utils.checkpoint_manager import CheckpointManager
-from .pipeline_metrics import PipelineMetrics
+from database.repository import DatabaseRepository
+from utils.checkpoint_manager import CheckpointManager
+from core.pipeline_metrics import PipelineMetrics
 
 logger = logging.getLogger(__name__)
 

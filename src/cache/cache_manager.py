@@ -9,9 +9,9 @@ import logging
 from collections import OrderedDict
 from threading import Lock
 
-from src.database.repository import DatabaseRepository
-from src.redis.asyncio import from_url as redis_from_url
-from src.cachetools import TTLCache
+from database.repository import DatabaseRepository
+from redis.asyncio import from_url as redis_from_url
+from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 

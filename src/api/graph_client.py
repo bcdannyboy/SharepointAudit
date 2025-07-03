@@ -5,10 +5,10 @@ from typing import Any, Optional
 
 import aiohttp
 
-from .auth_manager import AuthenticationManager
-from ..utils.rate_limiter import RateLimiter
-from ..utils.retry_handler import RetryStrategy, RetryConfig
-from ..utils.exceptions import GraphAPIError
+from api.auth_manager import AuthenticationManager
+from utils.rate_limiter import RateLimiter
+from utils.retry_handler import RetryStrategy, RetryConfig
+from utils.exceptions import GraphAPIError
 
 logger = logging.getLogger(__name__)
 

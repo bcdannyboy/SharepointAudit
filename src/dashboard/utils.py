@@ -9,7 +9,7 @@ if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
 # Now we can import from src
-from src.database.repository import DatabaseRepository
+from database.repository import DatabaseRepository
 
 def format_bytes(bytes_value):
     """Format bytes into human-readable format"""

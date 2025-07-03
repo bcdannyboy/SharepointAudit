@@ -23,14 +23,14 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from ..core.pipeline import AuditPipeline, PipelineContext
-from ..api.auth_manager import AuthenticationManager
-from ..api.graph_client import GraphAPIClient
-from ..api.sharepoint_client import SharePointAPIClient
-from ..cache.cache_manager import CacheManager
-from ..core.discovery import DiscoveryModule
-from ..core.permissions import PermissionAnalyzer
-from ..core.processors import (
+from core.pipeline import AuditPipeline, PipelineContext
+from api.auth_manager import AuthenticationManager
+from api.graph_client import GraphAPIClient
+from api.sharepoint_client import SharePointAPIClient
+from cache.cache_manager import CacheManager
+from core.discovery import DiscoveryModule
+from core.permissions import PermissionAnalyzer
+from core.processors import (
     DiscoveryStage,
     ValidationStage,
     TransformationStage,
@@ -38,14 +38,14 @@ from ..core.processors import (
     StorageStage,
     PermissionAnalysisStage,
 )
-from ..core.pipeline_metrics import PipelineMetrics
-from ..database.repository import DatabaseRepository
-from ..utils.checkpoint_manager import CheckpointManager
-from ..utils.rate_limiter import RateLimiter
-from ..utils.retry_handler import RetryStrategy, RetryConfig
-from .config_parser import load_and_merge_config
-from .output import RichOutput, setup_logging
-from ..utils.config_parser import AuthConfig
+from core.pipeline_metrics import PipelineMetrics
+from database.repository import DatabaseRepository
+from utils.checkpoint_manager import CheckpointManager
+from utils.rate_limiter import RateLimiter
+from utils.retry_handler import RetryStrategy, RetryConfig
+from cli.config_parser import load_and_merge_config
+from cli.output import RichOutput, setup_logging
+from utils.config_parser import AuthConfig
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -200,13 +200,16 @@ async def _run_audit(
     # Create checkpoint manager
     checkpoint_manager = CheckpointManager(db_repo)
 
-    # Create discovery module
+    # Create cache manager
+    cache_manager = CacheManager(db_repo)
+
+    # Create discovery module with correct parameters
     discovery_module = DiscoveryModule(
         graph_client,
         sp_client,
         db_repo,
-        checkpoint_manager,
-        max_concurrent_sites=config.get("max_concurrent", 50),
+        cache=cache_manager,
+        checkpoints=checkpoint_manager,
         max_concurrent_operations=config.get("max_concurrent", 50),
         active_only=active_only,
     )
@@ -240,7 +243,6 @@ async def _run_audit(
 
     # Always add permission analysis for comprehensive auditing
     output.info("Adding permission analysis stage...")
-    cache_manager = CacheManager(db_repo)
     permission_analyzer = PermissionAnalyzer(
         graph_client=graph_client,
         sp_client=sp_client,
@@ -557,7 +559,7 @@ def health(ctx, config, check_auth, check_api, check_db):
     if check_auth or check_api:
         try:
             with output.status("Loading configuration..."):
-                from ..utils.config_parser import load_config
+                from utils.config_parser import load_config
 
                 app_config = load_config(config)
             output.success("Configuration loaded")

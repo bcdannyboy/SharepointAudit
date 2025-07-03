@@ -47,7 +47,9 @@ def discovery_module(
         mock_graph_client,
         mock_sharepoint_client,
         mock_db_repo,
-        mock_checkpoint_manager,
+        cache=None,
+        checkpoints=mock_checkpoint_manager,
+        active_only=False,
     )
     # Speed up by disabling progress logging
     module.progress_tracker = ProgressTracker()
