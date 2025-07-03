@@ -687,25 +687,9 @@ bandit -r src/
 6. Push (`git push origin feature/amazing-feature`)
 7. Open a Pull Request
 
-## 📝 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 Acknowledgments
-
-- Microsoft Graph API Documentation
-- SharePoint REST API Reference
-- Streamlit Community
-- AsyncIO Documentation
-- All contributors and testers
-
 ## 📞 Support
 
 - **Documentation**: See `/docs` folder for detailed guides
 - **Issues**: Open an issue on GitHub
 - **Discussions**: Use GitHub Discussions for questions
 - **Security**: Report security issues privately
-
----
-
-**Note**: This tool is designed for auditing and compliance purposes. Always ensure you have appropriate permissions before scanning SharePoint environments.
