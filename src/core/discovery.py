@@ -405,11 +405,11 @@ class DiscoveryModule(QueueBasedDiscovery):
 
                 # Acquire semaphore only for the API call
                 try:
-                    # Construct the URL
+                    # Construct the URL - include sharepointIds in the response
                     if folder_item_id == "root":
-                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root/children?$top=200"
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root/children?$top=200&$select=*,sharepointIds"
                     else:
-                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{folder_item_id}/children?$top=200"
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{folder_item_id}/children?$top=200&$select=*,sharepointIds"
 
                     # Fetch items
                     start_time = time.time()
@@ -512,8 +512,19 @@ class DiscoveryModule(QueueBasedDiscovery):
                 else f"/{folder['name']}"
             )
 
+            # Extract SharePoint list item ID if available
+            sharepoint_item_id = None
+            if "sharepointIds" in folder and folder["sharepointIds"]:
+                list_item_id = folder["sharepointIds"].get("listItemId")
+                if list_item_id:
+                    try:
+                        sharepoint_item_id = int(list_item_id)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid SharePoint list item ID for folder {folder['name']}: {list_item_id}")
+
             return {
                 "folder_id": folder["id"],
+                "sharepoint_item_id": sharepoint_item_id,
                 "library_id": library_id,
                 "site_id": site_id,
                 "site_url": site_url,
@@ -550,8 +561,19 @@ class DiscoveryModule(QueueBasedDiscovery):
     ) -> Optional[Dict[str, Any]]:
         """Convert API file response to database format."""
         try:
+            # Extract SharePoint list item ID if available
+            sharepoint_item_id = None
+            if "sharepointIds" in file and file["sharepointIds"]:
+                list_item_id = file["sharepointIds"].get("listItemId")
+                if list_item_id:
+                    try:
+                        sharepoint_item_id = int(list_item_id)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid SharePoint list item ID for file {file['name']}: {list_item_id}")
+
             return {
                 "file_id": file["id"],
+                "sharepoint_item_id": sharepoint_item_id,
                 "library_id": library_id,
                 "site_id": site_id,
                 "site_url": site_url,
@@ -614,14 +636,123 @@ class DiscoveryModule(QueueBasedDiscovery):
             logger.error(f"Error saving files batch: {e}")
 
     async def _discover_lists(self, site: Any) -> List[Dict[str, Any]]:
-        """Enumerate lists for the given site."""
-        # Implementation similar to _discover_libraries but for lists
-        return []
+        """Enumerate all lists (including non-library lists) for the given site."""
+        # Handle both dict and object access
+        if isinstance(site, dict):
+            site_id = site.get("id")
+            site_url = site.get("site_url", site.get("webUrl", site.get("url", "")))
+        else:
+            site_id = getattr(site, "id", None)
+            site_url = getattr(
+                site, "site_url", getattr(site, "webUrl", getattr(site, "url", ""))
+            )
+
+        if not site_id:
+            return []
+
+        try:
+            cache_key = f"site_lists:{site_id}"
+            if self.cache:
+                cached = await self.cache.get(cache_key)
+                if cached is not None:
+                    return cached
+
+            # Get all lists for the site (not just document libraries)
+            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists?$expand=columns&$filter=list/hidden eq false"
+            data = await self._run_api_task(self.graph_client.get_with_retry(url))
+            lists = data.get("value", [])
+
+            # Filter out system lists and document libraries (which are discovered separately)
+            non_library_lists = []
+            for lst in lists:
+                # Skip document libraries (they have an associated drive)
+                if lst.get("list", {}).get("template") == "documentLibrary":
+                    continue
+                # Skip hidden or system lists
+                if lst.get("list", {}).get("hidden", False):
+                    continue
+                non_library_lists.append(lst)
+
+            # Save lists to database
+            if non_library_lists:
+                records = []
+                for lst in non_library_lists:
+                    record = {
+                        "list_id": lst.get("id"),
+                        "site_id": site_id,
+                        "site_url": site_url,
+                        "name": lst.get("displayName", lst.get("name", "")),
+                        "description": lst.get("description"),
+                        "created_at": lst.get("createdDateTime"),
+                        "template": lst.get("list", {}).get("template"),
+                        "item_count": lst.get("list", {}).get("itemCount", 0),
+                    }
+                    records.append(record)
+
+                if records:
+                    await self.db_repo.bulk_insert("lists", records)
+                    self.discovered_counts["lists"] = self.discovered_counts.get("lists", 0) + len(records)
+                    logger.info(
+                        f"Discovered {len(records)} lists in site (Total: {self.discovered_counts.get('lists', 0)})"
+                    )
+
+            if self.cache:
+                await self.cache.set(cache_key, non_library_lists, ttl=3600)
+
+            return non_library_lists
+
+        except Exception as e:
+            logger.error(f"Error discovering lists for site {site_id}: {e}")
+            return []
 
     async def _discover_subsites(self, run_id: str, site: Any) -> List[Dict[str, Any]]:
         """Discover subsites for the given site."""
-        # Implementation for discovering subsites
-        return []
+        # Handle both dict and object access
+        if isinstance(site, dict):
+            site_id = site.get("id")
+            site_url = site.get("site_url", site.get("webUrl", site.get("url", "")))
+        else:
+            site_id = getattr(site, "id", None)
+            site_url = getattr(
+                site, "site_url", getattr(site, "webUrl", getattr(site, "url", ""))
+            )
+
+        if not site_id or not site_url:
+            return []
+
+        try:
+            # Note: Graph API doesn't have a direct endpoint for subsites
+            # We need to use SharePoint REST API or search for sites with parent relationship
+            # For now, we'll use search to find sites that are children of this site
+
+            # Extract the site collection URL
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(site_url)
+            site_collection_path = parsed_url.path
+
+            # Search for subsites by URL pattern
+            search_query = f"path:{site_url} AND contentClass:STS_Site"
+            url = f"https://graph.microsoft.com/v1.0/search/query"
+
+            search_body = {
+                "requests": [{
+                    "entityTypes": ["site"],
+                    "query": {
+                        "queryString": search_query
+                    },
+                    "from": 0,
+                    "size": 100
+                }]
+            }
+
+            # For now, return empty list as subsite discovery is complex
+            # and requires additional SharePoint REST API calls
+            logger.debug(f"Subsite discovery not fully implemented for site {site_id}")
+            return []
+
+        except Exception as e:
+            logger.error(f"Error discovering subsites for site {site_id}: {e}")
+            return []
 
     def _is_valid_site(self, site_data: Dict[str, Any]) -> bool:
         """Check if a site should be included in discovery."""

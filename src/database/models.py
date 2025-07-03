@@ -38,6 +38,20 @@ SCHEMA_STATEMENTS = [
         enable_minor_versions BOOLEAN DEFAULT FALSE,
         drive_id TEXT
     );""",
+    """CREATE TABLE IF NOT EXISTS lists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        list_id TEXT UNIQUE NOT NULL,
+        site_id INTEGER REFERENCES sites(id),
+        site_url TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        template TEXT,
+        item_count INTEGER DEFAULT 0,
+        is_hidden BOOLEAN DEFAULT FALSE,
+        enable_versioning BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP,
+        last_modified TIMESTAMP
+    );""",
     """CREATE TABLE IF NOT EXISTS folders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         folder_id TEXT UNIQUE NOT NULL,
@@ -54,7 +68,8 @@ SCHEMA_STATEMENTS = [
         created_by TEXT,
         modified_at TIMESTAMP,
         modified_by TEXT,
-        path TEXT
+        path TEXT,
+        sharepoint_item_id INTEGER
     );""",
     """CREATE TABLE IF NOT EXISTS files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +90,8 @@ SCHEMA_STATEMENTS = [
         is_checked_out BOOLEAN DEFAULT FALSE,
         checked_out_by TEXT,
         has_unique_permissions BOOLEAN DEFAULT FALSE,
-        folder_path TEXT
+        folder_path TEXT,
+        sharepoint_item_id INTEGER
     );""",
     """CREATE TABLE IF NOT EXISTS permissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

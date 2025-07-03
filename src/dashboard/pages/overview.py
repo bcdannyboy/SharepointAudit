@@ -26,9 +26,9 @@ def load_summary_data(db_path: str) -> dict:
 
         # Get latest audit run info
         audit_query = """
-        SELECT run_id, status, started_at, completed_at, error_details
+        SELECT run_id, status, start_time as started_at, end_time as completed_at, error_count
         FROM audit_runs
-        ORDER BY started_at DESC
+        ORDER BY start_time DESC
         LIMIT 1
         """
         latest_audit = await repo.fetch_one(audit_query)
@@ -158,8 +158,8 @@ def render(db_path: str) -> None:
             f"Status: :{status_color}[{audit['status']}] - "
             f"Started: {audit['started_at']}"
         )
-        if audit.get("error_details"):
-            st.error(f"Error: {audit['error_details']}")
+        if audit.get("error_count") and audit["error_count"] > 0:
+            st.error(f"Audit completed with {audit['error_count']} errors")
 
     # Key metrics
     st.subheader("Key Metrics")

@@ -27,6 +27,7 @@ class GraphAPIClient:
         self.rate_limiter = rate_limiter or RateLimiter()
         self._token_cache: Optional[dict] = None
         self._token_expires_at: float = 0
+        self._session: Optional[aiohttp.ClientSession] = None
 
     async def _get_auth_headers(self) -> dict[str, str]:
         """Get authentication headers with a valid access token."""
@@ -63,7 +64,7 @@ class GraphAPIClient:
             return {"Authorization": f"Bearer {token_response.token}"}
         except Exception as e:
             logger.error(f"Failed to get authentication token: {e}")
-            raise GraphAPIError(f"Authentication failed: {e}")
+            raise GraphAPIError(f"Authentication failed: {e}") from e
 
     async def get_with_retry(self, url: str, **kwargs) -> Any:
         async def _do_get():
@@ -72,37 +73,37 @@ class GraphAPIClient:
             start = time.time()
 
             # Get auth headers and merge with any provided headers
-            logger.debug(f"[DEBUG API] Getting auth headers")
+            logger.debug("[DEBUG API] Getting auth headers")
             auth_headers = await self._get_auth_headers()
             headers = kwargs.get("headers", {})
             headers.update(auth_headers)
             kwargs["headers"] = headers
 
-            logger.debug(f"[DEBUG API] Creating session and sending request")
-            async with aiohttp.ClientSession() as session:
-                logger.debug(f"[DEBUG API] Sending GET request (timeout: {kwargs.get('timeout', 'default')})")
-                resp = await session.get(url, **kwargs)
-                if resp.status == 429:
-                    retry_after = int(resp.headers.get("Retry-After", "1"))
-                    raise GraphAPIError(
-                        "Too Many Requests",
-                        status_code=429,
-                        retry_after=retry_after,
-                    )
-                if resp.status >= 400:
-                    logger.error("GET %s returned HTTP %s", url, resp.status)
-                    raise GraphAPIError(f"HTTP {resp.status}", status_code=resp.status)
-                logger.debug(f"[DEBUG API] Response received, parsing JSON")
-                data = await resp.json()
-                elapsed = time.time() - start
-                logger.info("GET %s succeeded in %.2fs", url, elapsed)
-                logger.debug(f"[DEBUG API] Response contains {len(data.get('value', []))} items")
-                return data
+            logger.debug("[DEBUG API] Getting session and sending request")
+            session = await self._get_session()
+            logger.debug(f"[DEBUG API] Sending GET request (timeout: {kwargs.get('timeout', 'default')})")
+            resp = await session.get(url, **kwargs)
+            if resp.status == 429:
+                retry_after = int(resp.headers.get("Retry-After", "1"))
+                raise GraphAPIError(
+                    "Too Many Requests",
+                    status_code=429,
+                    retry_after=retry_after,
+                )
+            if resp.status >= 400:
+                logger.error("GET %s returned HTTP %s", url, resp.status)
+                raise GraphAPIError(f"HTTP {resp.status}", status_code=resp.status)
+            logger.debug("[DEBUG API] Response received, parsing JSON")
+            data = await resp.json()
+            elapsed = time.time() - start
+            logger.info("GET %s succeeded in %.2fs", url, elapsed)
+            logger.debug(f"[DEBUG API] Response contains {len(data.get('value', []))} items")
+            return data
 
         logger.debug(f"[DEBUG API] Executing with retry strategy for: {url}")
         try:
             result = await self.retry_strategy.execute_with_retry(url, _do_get)
-            logger.debug(f"[DEBUG API] Retry strategy completed successfully")
+            logger.debug("[DEBUG API] Retry strategy completed successfully")
             return result
         except Exception as e:
             logger.error(f"[DEBUG API] Request failed after retries: {url} - {str(e)}")
@@ -119,21 +120,21 @@ class GraphAPIClient:
             headers.update(auth_headers)
             kwargs["headers"] = headers
 
-            async with aiohttp.ClientSession() as session:
-                resp = await session.post(url, **kwargs)
-                if resp.status == 429:
-                    retry_after = int(resp.headers.get("Retry-After", "1"))
-                    raise GraphAPIError(
-                        "Too Many Requests",
-                        status_code=429,
-                        retry_after=retry_after,
-                    )
-                if resp.status >= 400:
-                    logger.error("POST %s returned HTTP %s", url, resp.status)
-                    raise GraphAPIError(f"HTTP {resp.status}", status_code=resp.status)
-                data = await resp.json()
-                logger.info("POST %s succeeded in %.2fs", url, time.time() - start)
-                return data
+            session = await self._get_session()
+            resp = await session.post(url, **kwargs)
+            if resp.status == 429:
+                retry_after = int(resp.headers.get("Retry-After", "1"))
+                raise GraphAPIError(
+                    "Too Many Requests",
+                    status_code=429,
+                    retry_after=retry_after,
+                )
+            if resp.status >= 400:
+                logger.error("POST %s returned HTTP %s", url, resp.status)
+                raise GraphAPIError(f"HTTP {resp.status}", status_code=resp.status)
+            data = await resp.json()
+            logger.info("POST %s succeeded in %.2fs", url, time.time() - start)
+            return data
 
         return await self.retry_strategy.execute_with_retry(url, _do_post)
 
@@ -291,3 +292,14 @@ class GraphAPIClient:
         except GraphAPIError:
             # If we can't get user info, assume based on UPN pattern
             return "#EXT#" in user_principal_name or "_" in user_principal_name.split("@")[0]
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create the aiohttp session."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        """Close the aiohttp session."""
+        if self._session and not self._session.closed:
+            await self._session.close()

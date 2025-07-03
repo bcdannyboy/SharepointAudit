@@ -239,9 +239,8 @@ async def _run_audit(
     pipeline.add_stage(ValidationStage())
     pipeline.add_stage(TransformationStage())
     pipeline.add_stage(EnrichmentStage())
-    pipeline.add_stage(StorageStage(db_repo))
 
-    # Always add permission analysis for comprehensive auditing
+    # Add permission analysis BEFORE storage so permissions are saved
     output.info("Adding permission analysis stage...")
     permission_analyzer = PermissionAnalyzer(
         graph_client=graph_client,
@@ -250,6 +249,9 @@ async def _run_audit(
         cache_manager=cache_manager,
     )
     pipeline.add_stage(PermissionAnalysisStage(permission_analyzer))
+
+    # Storage stage must be last to save all data including permissions
+    pipeline.add_stage(StorageStage(db_repo))
 
     # Run pipeline with progress tracking
     output.info("Starting audit pipeline...")
@@ -279,16 +281,12 @@ async def _run_audit(
             await result.db_repository.update_audit_run(
                 result.run_id,
                 {
-                    "completed_at": datetime.datetime.now(
+                    "end_time": datetime.datetime.now(
                         datetime.timezone.utc
                     ).isoformat(),
                     "status": status,
-                    "total_sites_processed": len(result.sites),
-                    "total_items_processed": result.total_items,
-                    "total_errors": len(result.errors),
-                    "error_details": (
-                        "\n".join(result.errors[:10]) if result.errors else None
-                    ),
+                    "total_sites": len(result.sites),
+                    "error_count": len(result.errors),
                 },
             )
 
@@ -304,6 +302,10 @@ async def _run_audit(
         except Exception as e:
             progress.stop()
             raise
+        finally:
+            # Clean up client sessions
+            await graph_client.close()
+            await sp_client.close()
 
 
 def _show_dry_run_plan(config: Dict[str, Any]):

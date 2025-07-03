@@ -90,14 +90,10 @@ class SharePointAPIClient:
                 # Fallback to Graph API scope
                 scope = "https://graph.microsoft.com/.default"
 
-            # DIAGNOSTIC LOGGING for HTTP 400 debugging
-            logger.info(f"DIAGNOSTIC: Making HTTP GET request")
-            logger.info(f"DIAGNOSTIC: URL = {url}")
-            logger.info(f"DIAGNOSTIC: Extracted tenant_name = {tenant_name if match else 'None'}")
-            logger.info(f"DIAGNOSTIC: Using scope = {scope}")
+            logger.debug(f"Making SharePoint API request to: {url}")
 
             token = credential.get_token(scope)
-            logger.info(f"DIAGNOSTIC: Token acquired successfully, expires_on = {token.expires_on}")
+            logger.debug(f"Token acquired, expires: {token.expires_on}")
 
             # Add authorization header
             headers = kwargs.get("headers", {})
@@ -105,15 +101,13 @@ class SharePointAPIClient:
             headers["Accept"] = "application/json"
             kwargs["headers"] = headers
 
-            logger.info(f"DIAGNOSTIC: Request headers = {headers}")
+            logger.debug(f"Request headers set")
 
             # Fix: Use managed session with connection pooling
             session = await self._get_session()
             resp = await session.get(url, **kwargs)
 
-            # DIAGNOSTIC LOGGING for response
-            logger.info(f"DIAGNOSTIC: Response status = {resp.status}")
-            logger.info(f"DIAGNOSTIC: Response headers = {dict(resp.headers)}")
+            logger.debug(f"Response status: {resp.status}")
 
             if resp.status == 429:
                 retry_after = int(resp.headers.get("Retry-After", "1"))
@@ -289,12 +283,7 @@ class SharePointAPIClient:
         # Fix: Use correct SharePoint REST API URL format
         api_url = f"{site_url}/_api/web/lists/getbyid('{library_id}')/items({item_id})/roleassignments?$expand=Member,RoleDefinitionBindings"
 
-        # DIAGNOSTIC LOGGING for HTTP 400 debugging
-        logger.info(f"DIAGNOSTIC: Getting item permissions")
-        logger.info(f"DIAGNOSTIC: site_url = {site_url}")
-        logger.info(f"DIAGNOSTIC: library_id = {library_id}")
-        logger.info(f"DIAGNOSTIC: item_id = {item_id} (type: {type(item_id)})")
-        logger.info(f"DIAGNOSTIC: Constructed URL = {api_url}")
+        logger.debug(f"Getting item permissions for item {item_id} in library {library_id}")
 
         try:
             response = await self.get_with_retry(api_url)
@@ -306,16 +295,15 @@ class SharePointAPIClient:
             logger.debug(f"SharePoint API returned {len(results)} role assignments for item {item_id}")
             return results
         except SharePointAPIError as e:
-            logger.error(f"DIAGNOSTIC: SharePointAPIError in get_item_permissions for item {item_id}")
-            logger.error(f"DIAGNOSTIC: Full URL that failed: {api_url}")
-            logger.error(f"DIAGNOSTIC: Status code: {e.status_code}")
-            logger.error(f"DIAGNOSTIC: Error message: {e}")
+            if e.status_code == 400:
+                logger.warning(
+                    f"HTTP 400 error getting permissions for item {item_id}. "
+                    f"This usually means the item ID is from Graph API (GUID) not SharePoint (numeric)."
+                )
+            else:
+                logger.error(f"SharePoint API error getting permissions for item {item_id}: {e}")
             raise e
         except Exception as e:
-            logger.error(f"DIAGNOSTIC: Unexpected error in get_item_permissions for item {item_id}")
-            logger.error(f"DIAGNOSTIC: Full URL that failed: {api_url}")
-            logger.error(f"DIAGNOSTIC: Error type: {type(e)}")
-            logger.error(f"DIAGNOSTIC: Error message: {e}")
             logger.error(f"Failed to get item permissions for {item_id}: {e}")
             raise SharePointAPIError(f"Failed to get item permissions: {e}")
 
@@ -335,12 +323,7 @@ class SharePointAPIClient:
         # Fix: Use correct SharePoint REST API URL format
         api_url = f"{site_url}/_api/web/lists/getbyid('{library_id}')/items({item_id})?$select=Id,HasUniqueRoleAssignments"
 
-        # DIAGNOSTIC LOGGING for HTTP 400 debugging
-        logger.info(f"DIAGNOSTIC: Checking unique permissions")
-        logger.info(f"DIAGNOSTIC: site_url = {site_url}")
-        logger.info(f"DIAGNOSTIC: library_id = {library_id}")
-        logger.info(f"DIAGNOSTIC: item_id = {item_id} (type: {type(item_id)})")
-        logger.info(f"DIAGNOSTIC: Constructed URL = {api_url}")
+        logger.debug(f"Checking unique permissions for item {item_id} in library {library_id}")
 
         try:
             response = await self.get_with_retry(api_url)
@@ -356,18 +339,15 @@ class SharePointAPIClient:
             # Some items (like certain system items) might not support this property
             # In such cases, assume they inherit permissions
             if e.status_code == 400:
-                logger.error(f"DIAGNOSTIC: HTTP 400 Error for item {item_id}")
-                logger.error(f"DIAGNOSTIC: Full URL that failed: {api_url}")
-                logger.error(f"DIAGNOSTIC: Error message: {e}")
-                logger.debug(f"Item {item_id} doesn't support HasUniqueRoleAssignments property, assuming inherited permissions")
+                logger.debug(
+                    f"Cannot check unique permissions for item {item_id} - "
+                    f"likely using Graph API ID instead of SharePoint item ID"
+                )
                 return False
             else:
                 logger.error(f"Failed to check unique permissions for {item_id}: {e}")
                 return False
         except Exception as e:
-            logger.error(f"DIAGNOSTIC: Unexpected error for item {item_id}")
-            logger.error(f"DIAGNOSTIC: Full URL that failed: {api_url}")
-            logger.error(f"DIAGNOSTIC: Error message: {e}")
             logger.error(f"Failed to check unique permissions for {item_id}: {e}")
             return False
 

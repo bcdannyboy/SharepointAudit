@@ -142,11 +142,12 @@ class PermissionAnalyzer:
         Returns:
             PermissionSet containing all resolved permissions
         """
+        # Get the appropriate ID based on item type - avoid using auto-increment 'id'
         item_id = (
-            item.get("id")
-            or item.get("site_id")
+            item.get("site_id")
             or item.get("library_id")
             or item.get("file_id")
+            or item.get("folder_id")
         )
         item_path = (
             item.get("url")
@@ -226,23 +227,33 @@ class PermissionAnalyzer:
                         # unless the flag is already set
                         pass
                     elif item_type in ["folder", "file"]:
-                        item_id = (
-                            item.get("id")
-                            or item.get("file_id")
-                            or item.get("folder_id")
-                        )
-                        if library_id and item_id:
-                            # DIAGNOSTIC LOGGING for HTTP 400 debugging
-                            logger.info(f"DIAGNOSTIC: _check_has_unique_permissions called")
-                            logger.info(f"DIAGNOSTIC: item_type = {item_type}")
-                            logger.info(f"DIAGNOSTIC: item_id = {item_id} (type: {type(item_id)})")
-                            logger.info(f"DIAGNOSTIC: library_id = {library_id}")
-                            logger.info(f"DIAGNOSTIC: site_url = {site_url}")
-                            logger.info(f"DIAGNOSTIC: Converting item_id to int: {int(item_id)}")
-
+                        # First try to use SharePoint item ID if available
+                        sharepoint_item_id = item.get("sharepoint_item_id")
+                        if library_id and sharepoint_item_id:
+                            # Use the numeric SharePoint item ID directly
+                            logger.debug(f"Using SharePoint item ID {sharepoint_item_id} for {item_type}")
                             has_unique = await self.sp_client.check_unique_permissions(
-                                site_url, library_id, int(item_id)
+                                site_url, library_id, sharepoint_item_id
                             )
+                        else:
+                            # Fallback to Graph API ID (this will likely fail)
+                            item_id = (
+                                item.get("id")
+                                or item.get("file_id")
+                                or item.get("folder_id")
+                            )
+                            if library_id and item_id:
+                                logger.debug(
+                                    f"No SharePoint item ID found for {item_type} {item_id}, "
+                                    "using library permissions instead"
+                                )
+                                # Graph API IDs are GUIDs, not numeric IDs
+                                # We cannot check unique permissions for individual files/folders
+                                # retrieved from Graph API without their SharePoint item IDs
+                                logger.debug(
+                                    f"Skipping unique permission check for {item_type} with Graph API ID: {item_id}"
+                                )
+                                has_unique = False
             except Exception as e:
                 logger.debug(
                     f"Could not check unique permissions for {item_type} {item.get('id')}: {e}"
@@ -288,42 +299,39 @@ class PermissionAnalyzer:
                     raise ValueError(f"Missing library_id for library: {item}")
             elif item_type in ["folder", "file"]:
                 library_id = item.get("library_id")
-                item_id = item.get("id") or item.get("file_id") or item.get("folder_id")
-                if library_id and item_id:
-                    # Convert item_id to int if it's numeric
-                    try:
-                        item_id_int = int(item_id)
-                        # DIAGNOSTIC LOGGING for HTTP 400 debugging
-                        logger.info(f"DIAGNOSTIC: _get_unique_permissions called")
-                        logger.info(f"DIAGNOSTIC: item_type = {item_type}")
-                        logger.info(f"DIAGNOSTIC: Original item_id = {item_id} (type: {type(item_id)})")
-                        logger.info(f"DIAGNOSTIC: Converted item_id_int = {item_id_int} (type: {type(item_id_int)})")
-                        logger.info(f"DIAGNOSTIC: library_id = {library_id}")
-                        logger.info(f"DIAGNOSTIC: site_url = {site_url}")
-                        logger.info(f"DIAGNOSTIC: Full item dict = {item}")
 
+                # First try to use SharePoint item ID if available
+                sharepoint_item_id = item.get("sharepoint_item_id")
+                if library_id and sharepoint_item_id:
+                    logger.debug(
+                        f"Getting {item_type} permissions using SharePoint item ID: {sharepoint_item_id}"
+                    )
+                    role_assignments = await self._run_api_task(
+                        self.sp_client.get_item_permissions(
+                            site_url, library_id, sharepoint_item_id
+                        )
+                    )
+                    logger.debug(
+                        f"{item_type} permissions response: {len(role_assignments)} role assignments"
+                    )
+                else:
+                    # We only have Graph API ID (GUID), not SharePoint item ID (numeric)
+                    item_id = item.get("id") or item.get("file_id") or item.get("folder_id")
+                    if library_id:
+                        # For files/folders from Graph API, we use library permissions
+                        # since we can't get item-specific permissions without numeric IDs
                         logger.debug(
-                            f"Getting {item_type} permissions for library_id: {library_id}, item_id: {item_id_int}"
+                            f"Using library permissions for {item_type} {item_id} "
+                            f"(Graph API items don't have numeric SharePoint IDs)"
                         )
                         role_assignments = await self._run_api_task(
-                            self.sp_client.get_item_permissions(
-                                site_url, library_id, item_id_int
-                            )
+                            self.sp_client.get_library_permissions(site_url, library_id)
                         )
                         logger.debug(
-                            f"{item_type} permissions response: {len(role_assignments)} role assignments"
+                            f"Library permissions used for {item_type}: {len(role_assignments)} role assignments"
                         )
-                    except (ValueError, TypeError) as e:
-                        # If item_id is not numeric, try as string
-                        logger.error(f"DIAGNOSTIC: Failed to convert item_id to int")
-                        logger.error(f"DIAGNOSTIC: item_id = {item_id} (type: {type(item_id)})")
-                        logger.error(f"DIAGNOSTIC: Conversion error: {e}")
-                        logger.warning(
-                            f"Item ID {item_id} is not numeric, skipping permissions"
-                        )
-                        role_assignments = []
-                else:
-                    raise ValueError(f"Missing required fields for {item_type}: {item}")
+                    else:
+                        raise ValueError(f"Missing library_id for {item_type}: {item}")
             else:
                 logger.warning(f"Unknown item type: {item_type}")
                 return
