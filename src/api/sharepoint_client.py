@@ -224,6 +224,17 @@ class SharePointAPIClient:
         operation_id = f"batch:{url}"
         return await self.retry_strategy.execute_with_retry(operation_id, _do_batch)
 
+    async def get_site_properties(self, site_url: str) -> dict[str, Any]:
+        """Get detailed site properties including state/status."""
+        api_url = f"{site_url}/_api/web?$select=*"
+        try:
+            response = await self.get_with_retry(api_url)
+            # SharePoint REST API returns data in 'd' property
+            return response.get("d", response)
+        except Exception as e:
+            logger.error(f"Failed to get site properties for {site_url}: {e}")
+            return {}
+
     async def get_site_permissions(self, site_url: str) -> list[dict[str, Any]]:
         """Get role assignments for a SharePoint site."""
         api_url = f"{site_url}/_api/web/roleassignments?$expand=Member,RoleDefinitionBindings"

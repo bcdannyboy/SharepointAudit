@@ -163,13 +163,15 @@ class DiscoveryModule(QueueBasedDiscovery):
                     return cached_sites
 
             sites = []
+            seen_site_ids = set()  # Track site IDs to prevent duplicates
             delta_token = None
 
-            # Check for saved delta token
-            if self.cache:
+            # Check for saved delta token (only use if not in active_only mode)
+            if self.cache and not self.active_only:
                 delta_token = await self.cache.get("sites_delta_token")
 
             # Use the graph client's get_all_sites_delta method which includes active filtering
+            logger.info(f"Calling get_all_sites_delta with active_only={self.active_only}")
             data = await self._run_api_task(
                 self.graph_client.get_all_sites_delta(delta_token, active_only=self.active_only)
             )
@@ -179,7 +181,12 @@ class DiscoveryModule(QueueBasedDiscovery):
                 # Process sites from current page
                 for site_data in data.get("value", []):
                     if self._is_valid_site(site_data):
-                        sites.append(site_data)
+                        site_id = site_data.get("id", "")
+                        if site_id and site_id not in seen_site_ids:
+                            seen_site_ids.add(site_id)
+                            sites.append(site_data)
+                        elif site_id:
+                            logger.debug(f"Skipping duplicate site during discovery: {site_data.get('displayName', 'Unknown')} (ID: {site_id})")
 
                 # Check for next page
                 next_url = data.get("@odata.nextLink")
@@ -247,7 +254,19 @@ class DiscoveryModule(QueueBasedDiscovery):
         status = await self.checkpoints.restore_checkpoint(run_id, checkpoint_key)
         if status == "completed":
             self.progress_tracker.skip(f"Site {site_title}", "Already processed")
+            logger.debug(f"Skipping already processed site: {site_title} (ID: {site_id})")
             return
+
+        # Also check if we've already started processing this site in this run
+        # to prevent duplicate processing due to search API issues
+        if site_id in getattr(self, '_processing_sites', set()):
+            logger.warning(f"Site {site_title} (ID: {site_id}) is already being processed, skipping duplicate")
+            return
+
+        # Track that we're processing this site
+        if not hasattr(self, '_processing_sites'):
+            self._processing_sites = set()
+        self._processing_sites.add(site_id)
 
         self.progress_tracker.start(f"Site {site_title}")
 
@@ -342,7 +361,8 @@ class DiscoveryModule(QueueBasedDiscovery):
                     records.append(record)
 
                 if records:
-                    await self.db_repo.bulk_insert("libraries", records)
+                    # Use bulk_upsert to handle duplicates
+                    await self.db_repo.bulk_upsert("libraries", records, ["library_id"])
                     self.discovered_counts["libraries"] += len(records)
                     logger.info(
                         f"Discovered {len(records)} libraries in site (Total: {self.discovered_counts['libraries']})"
@@ -613,7 +633,8 @@ class DiscoveryModule(QueueBasedDiscovery):
             return
 
         try:
-            await self.db_repo.bulk_insert("folders", folders)
+            # Use bulk_upsert instead of bulk_insert to handle duplicates
+            await self.db_repo.bulk_upsert("folders", folders, ["folder_id"])
             self.discovered_counts["folders"] += len(folders)
             logger.debug(
                 f"Saved {len(folders)} folders (Total: {self.discovered_counts['folders']})"
@@ -627,7 +648,8 @@ class DiscoveryModule(QueueBasedDiscovery):
             return
 
         try:
-            await self.db_repo.bulk_insert("files", files)
+            # Use bulk_upsert instead of bulk_insert to handle duplicates
+            await self.db_repo.bulk_upsert("files", files, ["file_id"])
             self.discovered_counts["files"] += len(files)
             logger.debug(
                 f"Saved {len(files)} files (Total: {self.discovered_counts['files']})"
@@ -690,7 +712,8 @@ class DiscoveryModule(QueueBasedDiscovery):
                     records.append(record)
 
                 if records:
-                    await self.db_repo.bulk_insert("lists", records)
+                    # Use bulk_upsert to handle duplicates
+                    await self.db_repo.bulk_upsert("lists", records, ["list_id"])
                     self.discovered_counts["lists"] = self.discovered_counts.get("lists", 0) + len(records)
                     logger.info(
                         f"Discovered {len(records)} lists in site (Total: {self.discovered_counts.get('lists', 0)})"
@@ -756,10 +779,16 @@ class DiscoveryModule(QueueBasedDiscovery):
 
     def _is_valid_site(self, site_data: Dict[str, Any]) -> bool:
         """Check if a site should be included in discovery."""
-        # Filter out certain system sites or based on other criteria
         site_url = site_data.get("webUrl", "")
+        site_name = site_data.get("displayName", site_data.get("name", ""))
+
+        # Always filter out personal sites (OneDrive)
         if any(skip in site_url for skip in ["/personal/", "-my.sharepoint.com"]):
+            logger.debug(f"Skipping personal site: {site_name}")
             return False
+
+        # If active_only is enabled, additional filtering is handled in GraphAPIClient.get_all_sites_delta
+        # This method just does basic validation
         return True
 
     async def _save_sites_to_database(self, sites: List[Dict[str, Any]]) -> None:

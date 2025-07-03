@@ -6,7 +6,7 @@
 
 ## 🚀 Overview
 
-SharePoint Audit Utility is a comprehensive, enterprise-grade Python application designed to audit SharePoint Online tenants at scale. It provides deep visibility into your SharePoint environment by discovering and analyzing all sites, libraries, folders, files, and permissions, presenting the data through an intuitive web dashboard.
+The SharePoint Audit Utility is a comprehensive, enterprise-grade Python application designed to audit SharePoint Online tenants at scale. It provides deep visibility into your SharePoint environment by discovering and analyzing all sites, libraries, folders, files, and permissions, presenting the data through an intuitive web dashboard.
 
 ### Key Capabilities
 

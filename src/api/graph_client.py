@@ -180,43 +180,119 @@ class GraphAPIClient:
         # Return the raw data - let the discovery module handle conversion
         result = await self.get_with_retry(url)
 
-        # If active_only is True, filter sites based on activity
+        # If active_only is True, we'll need to use the Search API instead
+        # The delta endpoint doesn't provide archive status
         if active_only and isinstance(result, dict) and 'value' in result:
-            # Filter sites to exclude:
-            # 1. Personal sites (OneDrive)
-            # 2. Archived/inactive sites
-            # 3. Sites that haven't been modified in over a year
-            from datetime import datetime, timezone, timedelta
-            one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+            logger.info("Active-only mode: Using search API to filter active sites")
 
-            filtered_sites = []
-            for site in result['value']:
-                # Skip personal sites (OneDrive)
-                if site.get('isPersonalSite', False):
-                    continue
+            # Use the search API which excludes archived sites by default
+            search_url = "https://graph.microsoft.com/v1.0/search/query"
+            search_body = {
+                "requests": [{
+                    "entityTypes": ["site"],
+                    "query": {
+                        "queryString": "NOT path:*/personal/*"  # Exclude personal sites
+                    },
+                    "from": 0,
+                    "size": 500  # Maximum allowed
+                }]
+            }
 
-                # Skip archived sites
-                if site.get('isArchived', False):
-                    continue
+            all_active_sites = []
+            seen_site_ids = set()  # Track site IDs to prevent duplicates
 
-                # Check last modified date if available
-                if 'lastModifiedDateTime' in site:
-                    try:
-                        last_modified = datetime.fromisoformat(site['lastModifiedDateTime'].replace('Z', '+00:00'))
-                        if last_modified < one_year_ago:
+            # Paginate through search results
+            while True:
+                try:
+                    search_result = await self.post_with_retry(search_url, json=search_body)
+                except Exception as e:
+                    logger.error(f"Search API failed: {e}")
+                    logger.warning("Falling back to delta API with client-side filtering")
+                    # Fall back to basic filtering on delta results
+                    filtered_sites = []
+                    for site in result['value']:
+                        site_url = site.get('webUrl', '')
+                        site_name = site.get('displayName', site.get('name', ''))
+
+                        # Skip personal sites
+                        if '/personal/' in site_url or '-my.sharepoint.com' in site_url:
                             continue
-                    except (ValueError, TypeError):
-                        pass
 
-                # Check site template for common inactive types
-                web_template = site.get('webTemplate', '').upper()
-                if web_template in ['TEAMCHANNEL#1', 'APPCATALOG#0']:  # Private channels, app catalog
-                    continue
+                        # Skip based on naming patterns
+                        name_lower = site_name.lower()
+                        if any(pattern in name_lower for pattern in ['archived', 'test-', 'demo-', 'old-', '_archive', '_test']):
+                            continue
 
-                filtered_sites.append(site)
+                        filtered_sites.append(site)
 
-            logger.info(f"Site filtering: {len(result['value'])} total sites, {len(filtered_sites)} active sites")
-            result['value'] = filtered_sites
+                    result['value'] = filtered_sites
+                    logger.info(f"Client-side filtering: {len(filtered_sites)} sites after filtering")
+                    return result
+
+                if search_result and 'value' in search_result and len(search_result['value']) > 0:
+                    hits = search_result['value'][0].get('hitsContainers', [])
+
+                    for container in hits:
+                        for hit in container.get('hits', []):
+                            resource = hit.get('resource', {})
+                            # Convert search result to match delta format
+                            site_data = {
+                                'id': resource.get('id', ''),
+                                'webUrl': resource.get('webUrl', ''),
+                                'displayName': resource.get('displayName', resource.get('name', '')),
+                                'name': resource.get('name', ''),
+                                'createdDateTime': resource.get('createdDateTime'),
+                                'lastModifiedDateTime': resource.get('lastModifiedDateTime')
+                            }
+
+                            # Additional filtering based on patterns
+                            site_url = site_data.get('webUrl', '')
+                            site_name = site_data.get('displayName', '')
+                            name_lower = site_name.lower()
+
+                            # Skip system/test/archived sites based on naming patterns
+                            if any(pattern in name_lower for pattern in ['archived', 'test-', 'demo-', 'old-', '_archive', '_test', 'teamchannel']):
+                                logger.debug(f"Skipping site based on naming pattern: {site_name}")
+                                continue
+
+                            # Skip app catalog and other system sites
+                            if any(pattern in site_url.lower() for pattern in ['/appcatalog/', '/sites/appcatalog', '-my.sharepoint.com']):
+                                logger.debug(f"Skipping system site: {site_name}")
+                                continue
+
+                            # Skip duplicates
+                            site_id = site_data.get('id', '')
+                            if site_id and site_id in seen_site_ids:
+                                logger.debug(f"Skipping duplicate site: {site_name} (ID: {site_id})")
+                                continue
+
+                            if site_id:
+                                seen_site_ids.add(site_id)
+
+                            all_active_sites.append(site_data)
+
+                        # Check if there are more results
+                        if container.get('moreResultsAvailable', False):
+                            # Update the from parameter for next page
+                            search_body['requests'][0]['from'] += search_body['requests'][0]['size']
+                        else:
+                            # No more results, exit loop
+                            break
+                else:
+                    break
+
+                # Limit total results to prevent excessive API calls
+                if len(all_active_sites) >= 2000:
+                    logger.warning("Reached maximum site limit of 2000")
+                    break
+
+            logger.info(f"Search API returned {len(all_active_sites)} active sites (excludes archived by default)")
+
+            # Replace the delta results with search results
+            result['value'] = all_active_sites
+            # Remove delta token since we're using search instead
+            if '@odata.deltaLink' in result:
+                del result['@odata.deltaLink']
 
         return result
 
