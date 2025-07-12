@@ -8,6 +8,8 @@ from cli.dashboard_command import dashboard
 # Import commands
 try:
     from cli.commands import audit, backup, restore, health
+    from cli.recovery_command import recovery_status
+    from cli.run_info_command import run_info
 except ImportError as e:
     # If there's an import error, use the simple fallback
     import traceback
@@ -37,6 +39,18 @@ except ImportError as e:
         click.echo("Error: Unable to load health command due to import issues.")
         ctx.exit(1)
 
+    @click.command()
+    @click.pass_context
+    def recovery_status(ctx):
+        click.echo("Error: Unable to load recovery status command due to import issues.")
+        ctx.exit(1)
+
+    @click.command()
+    @click.pass_context
+    def run_info(ctx):
+        click.echo("Error: Unable to load run info command due to import issues.")
+        ctx.exit(1)
+
 
 
 
@@ -60,6 +74,8 @@ cli.add_command(dashboard)
 cli.add_command(backup)
 cli.add_command(restore)
 cli.add_command(health)
+cli.add_command(recovery_status)
+cli.add_command(run_info)
 
 
 def main():

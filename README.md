@@ -14,6 +14,7 @@ The SharePoint Audit Utility is a comprehensive, enterprise-grade Python applica
 - **Deep Permission Analysis**: Analyzes unique permissions, external sharing, inheritance chains, and access patterns
 - **Enterprise Performance**: Handles millions of files with async operations, intelligent caching, and rate limiting
 - **Resilient Architecture**: Features checkpoint/resume capability, retry logic, and circuit breaker patterns
+- **Live Progress Tracking**: Real-time checkpoint saving with crash recovery support
 - **Interactive Dashboard**: Modern Streamlit-based interface with advanced filtering, visualizations, and export capabilities
 - **Security-First Design**: Certificate-based authentication, no password storage, comprehensive audit logging
 
@@ -24,6 +25,7 @@ The SharePoint Audit Utility is a comprehensive, enterprise-grade Python applica
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [Usage](#-usage)
+- [Run Management](#-run-management)
 - [Architecture](#-architecture)
 - [Dashboard Features](#-dashboard-features)
 - [Performance & Scaling](#-performance--scaling)
@@ -161,10 +163,20 @@ pip install -e ".[dev]"
 ```
 SharepointAudit/
 ├── config/
-│   └── config.json         # Main configuration
+│   ├── config.json         # Main configuration
+│   └── logging.yaml        # Logging configuration
 ├── .secrets/               # Certificates (git-ignored)
 │   ├── SharePointAudit.pfx
 │   └── SharePointAudit.cer
+├── logs/                   # Log files (git-ignored)
+│   ├── sharepoint_audit.log
+│   ├── sharepoint_audit_debug.log
+│   └── sharepoint_audit_errors.log
+├── .runs/                  # Run tracking (git-ignored)
+│   ├── current_run.json
+│   ├── last_run.json
+│   └── run_history.json
+├── .current_run_id         # Quick access to current run ID
 └── audit.db               # SQLite database (created on first run)
 ```
 
@@ -188,7 +200,7 @@ SharepointAudit/
   "pipeline": {
     "concurrent_requests": 50,
     "batch_size": 100,
-    "checkpoint_interval": 300,
+    "checkpoint_interval": 30,
     "rate_limit": {
       "requests_per_minute": 600,
       "burst_size": 20
@@ -211,13 +223,24 @@ SharepointAudit/
     "backend": "memory"
   },
   "logging": {
-    "level": "INFO",
-    "file": "logs/sharepoint_audit.log",
-    "max_size": "10MB",
-    "backup_count": 5
+    "config_file": "config/logging.yaml"
   }
 }
 ```
+
+### Logging Configuration (`config/logging.yaml`)
+
+The logging system outputs to multiple destinations:
+- **Console**: INFO level messages for progress tracking
+- **Log File**: JSON-formatted logs for parsing and analysis
+- **Debug File**: Detailed debug logs with full context
+- **Error File**: ERROR level messages only
+
+Debug logs include:
+- Timestamp, module name, function name, and line number
+- Full exception tracebacks
+- API request/response details
+- Performance metrics
 
 ### Environment Variables (Optional)
 
@@ -237,14 +260,29 @@ export SHAREPOINT_CERT_PASSWORD="your-password"
 # Discover all sites and analyze permissions
 sharepoint-audit audit --config config/config.json
 
+# The run ID will be displayed prominently:
+# ================================================================================
+# === RUN ID: audit_run_20240115_123456_a1b2c3d4 ===
+# === Started: 2024-01-15 12:34:56 UTC ===
+# ================================================================================
+
 # Verbose output with progress bars
 sharepoint-audit audit --config config/config.json -vv
 
 # Audit specific sites only
 sharepoint-audit audit --config config/config.json --sites "https://tenant.sharepoint.com/sites/HR,https://tenant.sharepoint.com/sites/IT"
 
-# Resume interrupted audit
-sharepoint-audit audit --config config/config.json --resume audit_run_20240115_123456
+# Audit only active sites (exclude archived)
+sharepoint-audit audit --config config/config.json --active-only
+```
+
+#### Resume Interrupted Audit
+```bash
+# Resume using the last run ID
+sharepoint-audit audit --config config/config.json --resume $(cat .current_run_id)
+
+# Resume a specific run
+sharepoint-audit audit --config config/config.json --resume audit_run_20240115_123456_a1b2c3d4
 ```
 
 #### Launch Dashboard
@@ -276,6 +314,64 @@ sharepoint-audit backup --db-path audit.db --output backups/audit_backup.db --co
 # Restore database
 sharepoint-audit restore --backup-path backups/audit_backup.db --db-path audit_restored.db
 ```
+
+## 📊 Run Management
+
+### Viewing Run Information
+```bash
+# Show current and recent runs
+sharepoint-audit run-info
+
+# Show only current running audit
+sharepoint-audit run-info --current
+
+# Show only last completed audit
+sharepoint-audit run-info --last
+
+# Show run history (last 10)
+sharepoint-audit run-info --history 10
+```
+
+### Recovery Status
+```bash
+# Check recovery status for all runs
+sharepoint-audit recovery-status
+
+# Check specific run
+sharepoint-audit recovery-status --run-id audit_run_20240115_123456_a1b2c3d4
+```
+
+### Quick Access Commands
+```bash
+# Get current run ID
+cat .current_run_id
+
+# View current run details
+cat .runs/current_run.json | jq
+
+# Resume current run
+sharepoint-audit audit --config config/config.json --resume $(cat .current_run_id)
+```
+
+### Crash Recovery
+
+The system automatically saves progress every 30 seconds and after processing each site/library. If the audit crashes or is interrupted:
+
+1. **Check the last run status**:
+   ```bash
+   sharepoint-audit recovery-status
+   ```
+
+2. **Resume from where it left off**:
+   ```bash
+   sharepoint-audit audit --config config/config.json --resume <run_id>
+   ```
+
+The recovery system tracks:
+- Completed pipeline stages
+- Processed sites and libraries
+- Discovered folders and files count
+- Last update timestamp
 
 ### Advanced Usage
 
@@ -327,6 +423,7 @@ graph TB
         AUTH[Authentication<br/>Manager]
         PIPELINE[Processing Pipeline]
         CACHE[Cache Layer]
+        CHECKPOINT[Live Checkpoint<br/>Manager]
         DB[(SQLite Database)]
 
         subgraph "Pipeline Stages"
@@ -361,6 +458,8 @@ graph TB
 
     CACHE --> DISC
     CACHE --> PERM
+    CHECKPOINT --> PIPELINE
+    CHECKPOINT --> DB
 
     DB --> DASH
     DASH --> EXPORT
@@ -379,6 +478,8 @@ src/
 ├── core/                       # Business Logic
 │   ├── pipeline.py            # Multi-stage processing pipeline
 │   ├── discovery.py           # Site/content discovery engine
+│   ├── discovery_enhanced.py  # Enhanced discovery with live checkpoints
+│   ├── discovery_queue_based.py # Queue-based discovery implementation
 │   ├── permissions.py         # Permission analysis engine
 │   ├── processors.py          # Data transformation processors
 │   └── concurrency.py         # Async operation management
@@ -404,15 +505,21 @@ src/
 │       └── export.py          # Data export
 │
 ├── cli/                        # Command Line Interface
-│   ├── commands.py            # CLI command implementations
-│   ├── config_parser.py       # Configuration management
+│   ├── main.py                # CLI entry point
+│   ├── commands.py            # Core CLI commands
+│   ├── dashboard_command.py   # Dashboard launcher
+│   ├── recovery_command.py    # Recovery status checker
+│   ├── run_info_command.py    # Run information display
 │   └── output.py              # Rich terminal output
 │
 └── utils/                      # Utilities
     ├── exceptions.py          # Custom exceptions
     ├── retry_handler.py       # Retry logic
     ├── rate_limiter.py        # API rate limiting
-    └── checkpoint_manager.py   # State persistence
+    ├── checkpoint_manager.py  # Basic checkpoint management
+    ├── live_checkpoint_manager.py # Enhanced live checkpointing
+    ├── run_id_manager.py      # Run ID tracking and display
+    └── logger.py              # Logging configuration
 ```
 
 ### Database Schema
@@ -462,11 +569,30 @@ CREATE TABLE permissions (
     is_external BOOLEAN
 );
 
+-- Audit Tables
+CREATE TABLE audit_runs (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    status TEXT,
+    error_message TEXT
+);
+
+CREATE TABLE audit_checkpoints (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT REFERENCES audit_runs(run_id),
+    checkpoint_type TEXT NOT NULL,
+    checkpoint_data TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for Performance
 CREATE INDEX idx_permissions_object ON permissions(object_type, object_id);
 CREATE INDEX idx_permissions_principal ON permissions(principal_type, principal_id);
 CREATE INDEX idx_files_library ON files(library_id);
 CREATE INDEX idx_files_size ON files(size_bytes);
+CREATE INDEX idx_checkpoints_run ON audit_checkpoints(run_id, checkpoint_type);
 ```
 
 ## 📊 Dashboard Features
@@ -514,7 +640,7 @@ CREATE INDEX idx_files_size ON files(size_bytes);
   "pipeline": {
     "concurrent_requests": 100,
     "batch_size": 500,
-    "checkpoint_interval": 120
+    "checkpoint_interval": 30
   },
   "cache": {
     "backend": "redis",
@@ -587,17 +713,56 @@ Error: Process killed due to excessive memory usage
 **Solution**: Reduce batch_size or process sites individually
 
 ### Debug Mode
+
+Debug logs are automatically written to `logs/sharepoint_audit_debug.log` with detailed information including:
+- Full API request/response details
+- Exception stack traces
+- Performance metrics
+- Module and function names
+
 ```bash
+# View debug logs in real-time
+tail -f logs/sharepoint_audit_debug.log
+
+# Search debug logs
+grep -i "error" logs/sharepoint_audit_debug.log
+
 # Maximum verbosity
 sharepoint-audit audit --config config/config.json -vvv
 
 # Debug specific component
 export SHAREPOINT_AUDIT_DEBUG=permissions
 sharepoint-audit audit --config config/config.json
-
-# Generate debug bundle
-sharepoint-audit debug --create-bundle --output debug_bundle.zip
 ```
+
+### Crash Recovery
+
+If an audit crashes or is interrupted:
+
+1. **Find the run ID**:
+   ```bash
+   # Current run (if still marked as running)
+   cat .current_run_id
+
+   # Or check run history
+   sharepoint-audit run-info
+   ```
+
+2. **Check what was completed**:
+   ```bash
+   sharepoint-audit recovery-status --run-id <run_id>
+   ```
+
+3. **Resume the audit**:
+   ```bash
+   sharepoint-audit audit --config config/config.json --resume <run_id>
+   ```
+
+The system saves checkpoints:
+- Every 30 seconds (configurable)
+- After each site is completed
+- After every 100 folders/files discovered
+- At each pipeline stage completion
 
 ## 🔒 Security Considerations
 

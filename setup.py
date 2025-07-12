@@ -29,6 +29,7 @@ setup(
         "prometheus-client>=0.18.0",
         "python-json-logger>=2.0.7",
         "redis>=5.0.0",
+        "humanize>=4.9.0",
     ],
     extras_require={
         "dev": [

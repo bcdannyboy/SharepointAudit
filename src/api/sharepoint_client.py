@@ -318,6 +318,35 @@ class SharePointAPIClient:
             logger.error(f"Failed to get item permissions for {item_id}: {e}")
             raise SharePointAPIError(f"Failed to get item permissions: {e}")
 
+    async def get_sharepoint_group_members(
+        self, site_url: str, group_id: int
+    ) -> list[dict[str, Any]]:
+        """Get members of a SharePoint group.
+
+        Args:
+            site_url: The SharePoint site URL
+            group_id: The numeric ID of the SharePoint group
+
+        Returns:
+            List of group member objects
+        """
+        api_url = f"{site_url}/_api/web/sitegroups({group_id})/users"
+
+        logger.debug(f"Getting members for SharePoint group {group_id}")
+
+        try:
+            response = await self.get_with_retry(api_url)
+            # SharePoint might return the results directly or in a value property
+            if isinstance(response, list):
+                results = response
+            else:
+                results = response.get("value", response.get("d", {}).get("results", []))
+            logger.debug(f"SharePoint group {group_id} has {len(results)} members")
+            return results
+        except Exception as e:
+            logger.error(f"Failed to get SharePoint group members for group {group_id}: {e}")
+            raise SharePointAPIError(f"Failed to get SharePoint group members: {e}")
+
     async def check_unique_permissions(
         self,
         site_url: str,

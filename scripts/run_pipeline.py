@@ -19,6 +19,9 @@ from src.api.graph_client import GraphAPIClient
 from src.api.sharepoint_client import SharePointAPIClient
 from src.cache.cache_manager import CacheManager
 from src.core.discovery import DiscoveryModule
+from src.core.discovery_enhanced import EnhancedDiscoveryModule
+from src.utils.live_checkpoint_manager import LiveCheckpointManager
+from src.utils.run_id_manager import RunIDManager
 from src.core.permissions import PermissionAnalyzer
 from src.core.pipeline import AuditPipeline, PipelineContext, PipelineStage
 from src.core.processors import (
@@ -218,11 +221,15 @@ async def create_pipeline(config_path: str = "config/config.json",
     logger.info("Initializing database...")
     await db_repo.initialize_database()
 
-    # Checkpoint manager
-    checkpoint_manager = CheckpointManager(db_repo)
+    # Checkpoint manager - use LiveCheckpointManager for better crash recovery
+    checkpoint_manager = LiveCheckpointManager(
+        db_repo,
+        save_interval=30,  # Save every 30 seconds
+        batch_size=50      # Batch up to 50 updates
+    )
 
-    # Discovery module
-    discovery_module = DiscoveryModule(
+    # Discovery module - use EnhancedDiscoveryModule for live progress tracking
+    discovery_module = EnhancedDiscoveryModule(
         graph_client,
         sp_client,
         db_repo,
@@ -240,6 +247,19 @@ async def create_pipeline(config_path: str = "config/config.json",
     # Create pipeline context
     if not run_id:
         run_id = f"audit_run_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+    # Initialize run ID manager
+    run_id_manager = RunIDManager()
+    run_id_manager.save_current_run(run_id, config_path)
+
+    # Display prominent run ID banner
+    banner = RunIDManager.format_run_id_banner(run_id)
+    print("\n" + banner + "\n")
+    logger.info(f"Starting audit with Run ID: {run_id}")
+    logger.info(f"Run ID saved to: .current_run_id")
+
+    # Set terminal title (works on many terminals)
+    print(f"\033]0;SharePoint Audit - {run_id}\007", end='', flush=True)
 
     context = PipelineContext(
         run_id=run_id,
@@ -342,6 +362,10 @@ async def main():
     """Main entry point for the pipeline runner."""
     import argparse
 
+    # Initialize these at function scope for error handlers
+    run_id_manager = None
+    db_path = None
+
     parser = argparse.ArgumentParser(description="Run the SharePoint audit pipeline")
     parser.add_argument(
         "--config",
@@ -394,6 +418,13 @@ async def main():
         if args.sites:
             sites_to_process = [s.strip() for s in args.sites.split(',')]
             logger.info(f"Will filter to specific sites: {sites_to_process}")
+
+        # Initialize run ID manager early
+        run_id_manager = RunIDManager()
+
+        # Get database path from config
+        config = load_config(args.config)
+        db_path = config.database.path if hasattr(config, 'database') else 'audit.db'
 
         # Create and configure pipeline
         logger.info("Creating audit pipeline...")
@@ -463,11 +494,25 @@ async def main():
 
             logger.info("=" * 60)
 
+            # Display run ID banner again at the end
+            print("\n" + RunIDManager.format_run_id_banner(result.run_id) + "\n")
+            logger.info(f"Audit completed successfully! Run ID: {result.run_id}")
+            logger.info(f"To view results: sharepoint-audit dashboard --db-path {db_path}")
+            logger.info(f"To check status later: sharepoint-audit recovery-status --run-id {result.run_id}")
+
+            # Mark run as completed
+            if run_id_manager:
+                run_id_manager.complete_current_run("completed")
+
     except KeyboardInterrupt:
         logger.warning("Pipeline interrupted by user")
+        if run_id_manager:
+            run_id_manager.complete_current_run("interrupted", "User interrupted")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Pipeline failed: {str(e)}", exc_info=True)
+        if run_id_manager:
+            run_id_manager.complete_current_run("failed", str(e))
         sys.exit(1)
 
 

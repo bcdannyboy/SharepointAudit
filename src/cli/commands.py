@@ -29,6 +29,9 @@ from api.graph_client import GraphAPIClient
 from api.sharepoint_client import SharePointAPIClient
 from cache.cache_manager import CacheManager
 from core.discovery import DiscoveryModule
+from core.discovery_enhanced import EnhancedDiscoveryModule
+from utils.live_checkpoint_manager import LiveCheckpointManager
+from utils.run_id_manager import RunIDManager
 from core.permissions import PermissionAnalyzer
 from core.processors import (
     DiscoveryStage,
@@ -158,10 +161,22 @@ async def _run_audit(
         or f"audit_run_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     )
 
+    # Initialize run ID manager
+    run_id_manager = RunIDManager()
+
     if resume_id:
         output.info(f"Resuming audit run: {run_id}")
+        # Display prominent banner
+        print("\n" + RunIDManager.format_run_id_banner(f"RESUMING: {run_id}") + "\n")
     else:
         output.info(f"Starting new audit run: {run_id}")
+        # Save and display run ID
+        run_id_manager.save_current_run(run_id, config.get("config_path"))
+        print("\n" + RunIDManager.format_run_id_banner(run_id) + "\n")
+        output.info(f"Run ID saved to: .current_run_id")
+
+    # Set terminal title
+    print(f"\033]0;SharePoint Audit - {run_id}\007", end='', flush=True)
 
     # Initialize components
     output.info("Initializing audit components...")
@@ -197,14 +212,18 @@ async def _run_audit(
     graph_client = GraphAPIClient(auth_manager, retry_strategy, rate_limiter)
     sp_client = SharePointAPIClient(auth_manager, retry_strategy, rate_limiter)
 
-    # Create checkpoint manager
-    checkpoint_manager = CheckpointManager(db_repo)
+    # Create checkpoint manager - use LiveCheckpointManager for better crash recovery
+    checkpoint_manager = LiveCheckpointManager(
+        db_repo,
+        save_interval=30,  # Save every 30 seconds
+        batch_size=50      # Batch up to 50 updates
+    )
 
     # Create cache manager
     cache_manager = CacheManager(db_repo)
 
-    # Create discovery module with correct parameters
-    discovery_module = DiscoveryModule(
+    # Create discovery module - use EnhancedDiscoveryModule for live progress tracking
+    discovery_module = EnhancedDiscoveryModule(
         graph_client,
         sp_client,
         db_repo,
@@ -299,8 +318,19 @@ async def _run_audit(
             else:
                 output.success("Audit completed successfully!")
 
+            # Display run ID banner again at completion
+            print("\n" + RunIDManager.format_run_id_banner(f"COMPLETED: {result.run_id}") + "\n")
+            output.info(f"Run ID: {result.run_id}")
+            output.info(f"To view dashboard: sharepoint-audit dashboard --db-path {db_path}")
+
+            # Mark run as completed
+            run_id_manager.complete_current_run("completed" if not result.errors else "completed_with_errors")
+
         except Exception as e:
             progress.stop()
+            # Mark run as failed
+            if 'run_id_manager' in locals():
+                run_id_manager.complete_current_run("failed", str(e))
             raise
         finally:
             # Clean up client sessions

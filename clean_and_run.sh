@@ -7,4 +7,4 @@ rm -f *.db-wal
 rm -f *.db-shm
 
 echo "Starting SharePoint audit (active sites only with reduced concurrency)..."
-python -m src.cli.main audit --config config/config.json --verbose --active-only --max-concurrent 5 "$@"
+sharepoint-audit audit --config config/config.json --verbose --active-only "$@"

@@ -91,7 +91,11 @@ SCHEMA_STATEMENTS = [
         checked_out_by TEXT,
         has_unique_permissions BOOLEAN DEFAULT FALSE,
         folder_path TEXT,
-        sharepoint_item_id INTEGER
+        sharepoint_item_id INTEGER,
+        sensitivity_score INTEGER DEFAULT 0,
+        sensitivity_level TEXT DEFAULT 'LOW',
+        sensitivity_categories TEXT,
+        sensitivity_factors TEXT
     );""",
     """CREATE TABLE IF NOT EXISTS permissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,6 +160,16 @@ SCHEMA_STATEMENTS = [
         expires_at TIMESTAMP NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );""",
+    """CREATE TABLE IF NOT EXISTS sensitivity_summary (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER REFERENCES audit_runs(id),
+        total_files INTEGER DEFAULT 0,
+        sensitive_files INTEGER DEFAULT 0,
+        critical_files INTEGER DEFAULT 0,
+        high_risk_files INTEGER DEFAULT 0,
+        categories_found TEXT,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );""",
 ]
 
 INDEX_STATEMENTS = [
@@ -172,6 +186,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_files_site ON files (site_id);",
     "CREATE INDEX IF NOT EXISTS idx_files_size ON files (size_bytes);",
     "CREATE INDEX IF NOT EXISTS idx_files_modified ON files (modified_at);",
+    "CREATE INDEX IF NOT EXISTS idx_files_sensitivity ON files (sensitivity_score DESC);",
     "CREATE INDEX IF NOT EXISTS idx_permissions_object ON permissions (object_type, object_id);",
     "CREATE INDEX IF NOT EXISTS idx_permissions_principal ON permissions (principal_type, principal_id);",
     "CREATE INDEX IF NOT EXISTS idx_permissions_level ON permissions (permission_level);",
@@ -248,6 +263,20 @@ VIEW_STATEMENTS = [
     LEFT JOIN folders fo ON p.object_type = 'folder' AND p.object_id = fo.folder_id
     LEFT JOIN files fi ON p.object_type = 'file' AND p.object_id = fi.file_id
     WHERE p.is_external = TRUE OR p.is_anonymous_link = TRUE;""",
+    """CREATE VIEW IF NOT EXISTS vw_sensitive_files AS
+    SELECT
+        f.*,
+        s.title as site_name,
+        l.name as library_name,
+        COUNT(DISTINCT p.principal_id) as total_users,
+        COUNT(DISTINCT CASE WHEN p.is_external = 1 THEN p.principal_id END) as external_users,
+        COUNT(DISTINCT CASE WHEN p.permission_level IN ('Full Control', 'Edit') THEN p.principal_id END) as write_users
+    FROM files f
+    JOIN sites s ON f.site_id = s.id
+    LEFT JOIN libraries l ON f.library_id = l.id
+    LEFT JOIN permissions p ON p.object_type = 'file' AND p.object_id = f.file_id
+    WHERE f.sensitivity_score >= 40
+    GROUP BY f.id;""",
 ]
 
 # Migration statements for existing databases

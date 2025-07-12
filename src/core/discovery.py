@@ -1,6 +1,7 @@
 """Discovery module for SharePoint audit system."""
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Set
@@ -16,6 +17,7 @@ from core.progress_tracker import ProgressTracker
 from utils.checkpoint_manager import CheckpointManager
 from core.concurrency import ConcurrencyManager
 from core.discovery_queue_based import QueueBasedDiscovery
+from utils.sensitive_content_detector import SensitiveContentDetector
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,9 @@ class DiscoveryModule(QueueBasedDiscovery):
         # Discovery state
         self.discovered_counts = {"sites": 0, "libraries": 0, "folders": 0, "files": 0}
         self.processed_sites = 0
+
+        # Initialize sensitivity detector
+        self.sensitivity_detector = SensitiveContentDetector()
         self.sites_with_errors: Set[str] = set()
         self.site_limit = None  # Optional limit on number of sites to process
 
@@ -387,11 +392,12 @@ class DiscoveryModule(QueueBasedDiscovery):
         self, site: Dict[str, Any], library: Dict[str, Any]
     ) -> None:
         """Queue-based discovery implementation."""
-        library_id = library.get("library_id", library.get("id"))
+        # Handle both database record format and raw API format
+        library_id = library.get("library_id") or library.get("id")
         library_name = library.get("name", "Unknown")
-        site_id = site.get("site_id", site.get("id"))
-        site_url = site.get("site_url", site.get("webUrl", site.get("url", "")))
-        drive_id = library.get("drive_id", library.get("id"))
+        site_id = site.get("site_id") or site.get("id")
+        site_url = site.get("site_url") or site.get("webUrl") or site.get("url", "")
+        drive_id = library.get("drive_id") or library.get("id")
 
         logger.info(
             f"[QUEUE] Starting queue-based discovery for library {library_name}"
@@ -591,7 +597,7 @@ class DiscoveryModule(QueueBasedDiscovery):
                     except (ValueError, TypeError):
                         logger.warning(f"Invalid SharePoint list item ID for file {file['name']}: {list_item_id}")
 
-            return {
+            file_dict = {
                 "file_id": file["id"],
                 "sharepoint_item_id": sharepoint_item_id,
                 "library_id": library_id,
@@ -623,6 +629,21 @@ class DiscoveryModule(QueueBasedDiscovery):
                 ),
                 "folder_path": folder_path,
             }
+
+            # Perform sensitivity analysis
+            sensitivity_result = self.sensitivity_detector.analyze_file_name(
+                file["name"],
+                file.get("webUrl", "")
+            )
+
+            # Add sensitivity fields
+            file_dict["sensitivity_score"] = sensitivity_result["sensitivity_score"]
+            file_dict["sensitivity_level"] = sensitivity_result["sensitivity_level"].name
+            file_dict["sensitivity_categories"] = json.dumps(sensitivity_result["categories"])
+            file_dict["sensitivity_factors"] = json.dumps(sensitivity_result["risk_factors"])
+
+            return file_dict
+
         except Exception as e:
             logger.error(f"Error converting file to dict: {e}")
             return None
@@ -680,7 +701,8 @@ class DiscoveryModule(QueueBasedDiscovery):
                     return cached
 
             # Get all lists for the site (not just document libraries)
-            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists?$expand=columns&$filter=list/hidden eq false"
+            # Note: The filter syntax for lists should not include the "list/" prefix
+            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists?$expand=columns&$filter=hidden eq false"
             data = await self._run_api_task(self.graph_client.get_with_retry(url))
             lists = data.get("value", [])
 

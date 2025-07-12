@@ -197,3 +197,14 @@ cython_debug/
 config.json
 .secrets/
 audit.db
+
+# claude
+CLAUDE.md
+
+# logs directory
+logs/
+*.log
+
+# run tracking files
+.runs/
+.current_run_id

@@ -13,8 +13,9 @@ from cli.output import RichOutput
 @click.option('--db-path', required=True, help='Path to the audit database file.')
 @click.option('--port', default=9999, help='Port to run the dashboard on.')
 @click.option('--no-browser', is_flag=True, help='Do not open browser automatically.')
+@click.option('--optimized', is_flag=True, help='Use optimized dashboard for large databases.')
 @click.pass_context
-def dashboard(ctx, db_path, port, no_browser):
+def dashboard(ctx, db_path, port, no_browser, optimized):
     """Launch the Streamlit dashboard for viewing audit results.
 
     This command starts a web-based dashboard that allows you to explore
@@ -29,7 +30,12 @@ def dashboard(ctx, db_path, port, no_browser):
         ctx.exit(1)
 
     # Check if streamlit app exists
-    streamlit_app_path = Path(__file__).parent.parent / "dashboard" / "streamlit_app.py"
+    if optimized:
+        streamlit_app_path = Path(__file__).parent.parent / "dashboard" / "app.py"
+        output.info("Using modular security dashboard with sensitivity analysis")
+    else:
+        streamlit_app_path = Path(__file__).parent.parent / "dashboard" / "app.py"
+
     if not streamlit_app_path.exists():
         output.error(f"Dashboard app not found: {streamlit_app_path}")
         ctx.exit(1)
@@ -39,7 +45,7 @@ def dashboard(ctx, db_path, port, no_browser):
         sys.executable, "-m", "streamlit", "run",
         str(streamlit_app_path),
         "--server.port", str(port),
-        "--", "--db-path", db_path
+        "--", db_path  # Pass db_path as positional argument
     ]
 
     if no_browser:

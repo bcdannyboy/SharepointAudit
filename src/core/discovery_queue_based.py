@@ -14,10 +14,11 @@ class QueueBasedDiscovery:
 
     async def _discover_library_contents_queue(self, site: Dict[str, Any], library: Dict[str, Any]) -> None:
         """Discover folders and files in a library using queue-based approach."""
-        library_id = library['library_id']
+        # Handle both database record format and raw API format
+        library_id = library.get('library_id') or library.get('id')
         library_name = library.get('name', 'Unknown')
-        site_id = site['site_id']
-        drive_id = library.get('drive_id', library_id)
+        site_id = site.get('site_id') or site.get('id')
+        drive_id = library.get('drive_id') or library.get('id')
 
         logger.info(f"[QUEUE] Starting queue-based discovery for library {library_name}")
 
@@ -49,63 +50,68 @@ class QueueBasedDiscovery:
                     continue
 
                 # Acquire semaphore only for the API call
-                async with self.operation_semaphore:
-                    try:
-                        # Construct the URL
-                        if folder_item_id == 'root':
-                            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root/children?$top=200"
+                try:
+                    # Construct the URL
+                    if folder_item_id == 'root':
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/root/children?$top=200"
+                    else:
+                        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{folder_item_id}/children?$top=200"
+
+                    # Fetch items
+                    start_time = time.time()
+                    items = []
+
+                    while url:
+                        # Use the concurrency manager's run_api_task method if available
+                        if hasattr(self, 'concurrency_manager'):
+                            response = await self.concurrency_manager.run_api_task(
+                                self.graph_client.get_with_retry(url)
+                            )
                         else:
-                            url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives/{drive_id}/items/{folder_item_id}/children?$top=200"
-
-                        # Fetch items
-                        start_time = time.time()
-                        items = []
-
-                        while url:
                             response = await self.graph_client.get_with_retry(url)
-                            if isinstance(response, dict) and 'value' in response:
-                                items.extend(response['value'])
-                                url = response.get('@odata.nextLink')
-                            else:
-                                break
+                        if isinstance(response, dict) and 'value' in response:
+                            items.extend(response['value'])
+                            url = response.get('@odata.nextLink')
+                        else:
+                            break
 
-                        fetch_time = time.time() - start_time
-                        logger.debug(f"[QUEUE] Fetched {len(items)} items from {folder_path} in {fetch_time:.2f}s")
+                    fetch_time = time.time() - start_time
+                    logger.debug(f"[QUEUE] Fetched {len(items)} items from {folder_path} in {fetch_time:.2f}s")
 
-                        # Process items
-                        folder_count = 0
-                        file_count = 0
+                    # Process items
+                    folder_count = 0
+                    file_count = 0
 
-                        for item in items:
-                            if item.get('folder'):
-                                # It's a folder
-                                folder_data = self._folder_to_dict(item, library_id, site_id, folder_path)
-                                if folder_data:
-                                    folders_batch.append(folder_data)
-                                    folder_count += 1
+                    for item in items:
+                        if item.get('folder'):
+                            # It's a folder
+                            folder_data = self._folder_to_dict(item, library_id, site_id, folder_path)
+                            if folder_data:
+                                folders_batch.append(folder_data)
+                                folder_count += 1
 
-                                    # Add subfolder to queue
-                                    new_path = f"{folder_path}/{item['name']}" if folder_path != "/" else f"/{item['name']}"
-                                    await folders_to_process.put({
-                                        'parent_id': folder_data['folder_id'],
-                                        'path': new_path,
-                                        'item_id': item['id'],
-                                        'depth': depth + 1
-                                    })
+                                # Add subfolder to queue
+                                new_path = f"{folder_path}/{item['name']}" if folder_path != "/" else f"/{item['name']}"
+                                await folders_to_process.put({
+                                    'parent_id': folder_data['folder_id'],
+                                    'path': new_path,
+                                    'item_id': item['id'],
+                                    'depth': depth + 1
+                                })
 
-                            elif item.get('file'):
-                                # It's a file
-                                file_data = self._file_to_dict(item, library_id, site_id, folder_path)
-                                if file_data:
-                                    files_batch.append(file_data)
-                                    file_count += 1
+                        elif item.get('file'):
+                            # It's a file
+                            file_data = self._file_to_dict(item, library_id, site_id, folder_path)
+                            if file_data:
+                                files_batch.append(file_data)
+                                file_count += 1
 
-                        if folder_count > 0 or file_count > 0:
-                            logger.info(f"Discovered {folder_count} folders, {file_count} files in {folder_path}")
+                    if folder_count > 0 or file_count > 0:
+                        logger.info(f"Discovered {folder_count} folders, {file_count} files in {folder_path}")
 
-                    except Exception as e:
-                        logger.error(f"Error fetching contents of {folder_path}: {e}")
-                        continue
+                except Exception as e:
+                    logger.error(f"Error fetching contents of {folder_path}: {e}")
+                    continue
 
                 # Save in batches to prevent memory issues
                 if len(folders_batch) >= 100:

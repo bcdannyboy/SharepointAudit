@@ -271,6 +271,9 @@ class PermissionAnalyzer:
             if not site_url:
                 raise ValueError(f"No site URL found for {item_type}: {item}")
 
+            # Store site URL for SharePoint group expansion
+            self._current_site_url = site_url
+
             # Get role assignments from SharePoint
             logger.debug(
                 f"Getting permissions for {item_type} with site_url: {site_url}"
@@ -471,9 +474,14 @@ class PermissionAnalyzer:
             permission_level = role.get("Name", "Unknown")
 
             if principal_type == PrincipalType.GROUP:
-                # Expand group membership
+                # Expand Azure AD group membership
                 await self._expand_and_add_group_permissions(
                     principal_id, principal_name, permission_level, permission_set
+                )
+            elif principal_type == PrincipalType.SHAREPOINT_GROUP:
+                # Expand SharePoint group membership
+                await self._expand_and_add_sharepoint_group_permissions(
+                    principal_id, principal_name, permission_level, permission_set, member
                 )
             else:
                 # Add individual permission
@@ -531,6 +539,80 @@ class PermissionAnalyzer:
 
         except Exception as e:
             logger.error(f"Failed to expand group {group_id}: {e}")
+
+    async def _expand_and_add_sharepoint_group_permissions(
+        self,
+        group_id: str,
+        group_name: str,
+        permission_level: str,
+        permission_set: PermissionSet,
+        member: Dict[str, Any],
+    ):
+        """Expand SharePoint group membership and add permissions for all members."""
+        try:
+            # Get site URL from the current context
+            site_url = getattr(self, '_current_site_url', None)
+            if not site_url:
+                logger.warning(f"No site URL available for SharePoint group {group_id}")
+                # Add permission for the group itself without expanding
+                group_entry = PermissionEntry(
+                    principal_id=group_id,
+                    principal_name=group_name,
+                    principal_type=PrincipalType.SHAREPOINT_GROUP,
+                    permission_level=permission_level,
+                    is_inherited=False,
+                    granted_at=datetime.now(timezone.utc),
+                )
+                permission_set.add_permission(group_entry)
+                return
+
+            # Convert group_id to int for SharePoint API
+            try:
+                numeric_group_id = int(group_id)
+            except ValueError:
+                logger.error(f"Invalid SharePoint group ID (not numeric): {group_id}")
+                return
+
+            # Get SharePoint group members
+            members = await self.sp_client.get_sharepoint_group_members(
+                site_url, numeric_group_id
+            )
+
+            # Add permission for the group itself
+            group_entry = PermissionEntry(
+                principal_id=group_id,
+                principal_name=group_name,
+                principal_type=PrincipalType.SHAREPOINT_GROUP,
+                permission_level=permission_level,
+                is_inherited=False,
+                granted_at=datetime.now(timezone.utc),
+            )
+            permission_set.add_permission(group_entry)
+
+            # Add permissions for each member
+            for sp_member in members:
+                member_id = str(sp_member.get("Id", ""))
+                member_name = sp_member.get("Title", sp_member.get("LoginName", "Unknown"))
+                member_type_value = sp_member.get("PrincipalType", 1)
+
+                # Determine member type
+                member_principal_type = self._get_principal_type(member_type_value, sp_member)
+                is_external = self._is_external_user(sp_member)
+
+                member_entry = PermissionEntry(
+                    principal_id=member_id,
+                    principal_name=member_name,
+                    principal_type=member_principal_type,
+                    permission_level=permission_level,
+                    is_inherited=False,
+                    granted_at=datetime.now(timezone.utc),
+                    granted_by=f"SharePoint Group: {group_name}",
+                    is_external=is_external,
+                )
+                permission_set.add_permission(member_entry)
+
+        except Exception as e:
+            logger.error(f"Failed to expand SharePoint group {group_id}: {e}")
 
     async def expand_group_permissions(self, group_id: str) -> GroupMembership:
         """Expands a group to get all its members, including nested groups."""
